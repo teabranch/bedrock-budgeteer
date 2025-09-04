@@ -168,13 +168,6 @@ class TestSSMParameters(TestBedrockBudgeteerStack):
     
     def test_global_parameters_created(self, template):
         """Test that global configuration parameters are created"""
-        # Test circuit breaker parameter
-        template.has_resource_properties("AWS::SSM::Parameter", {
-            "Name": "/bedrock-budgeteer/global/circuit_breaker_enabled",
-            "Value": "true",
-            "Type": "String"
-        })
-        
         # Test default budget parameter
         template.has_resource_properties("AWS::SSM::Parameter", {
             "Name": "/bedrock-budgeteer/global/default_user_budget_usd",

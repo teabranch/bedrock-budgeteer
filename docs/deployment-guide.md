@@ -293,8 +293,6 @@ aws cloudwatch describe-alarms --query 'MetricAlarms[?contains(AlarmName, `bedro
 cd app
 python -m pytest tests/unit/ -v
 
-# Check circuit breaker status
-aws ssm get-parameter --name "/bedrock-budgeteer/global/circuit_breaker_enabled"
 ```
 
 ## Configuration Options

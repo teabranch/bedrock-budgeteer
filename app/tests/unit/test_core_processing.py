@@ -1043,20 +1043,6 @@ class TestWorkflowIntegration(unittest.TestCase):
             self.assertIn('event_type', expected_call)
             self.assertIn('detail', expected_call)
     
-    def test_circuit_breaker_prevents_workflow_trigger(self):
-        """Test that circuit breaker prevents workflow triggers when disabled"""
-        
-        # Test scenario where circuit breaker is disabled
-        circuit_breaker_scenarios = [
-            {'circuit_breaker_enabled': False, 'should_trigger': False},
-            {'circuit_breaker_enabled': True, 'should_trigger': True},
-            {'emergency_stop_active': True, 'should_trigger': False}
-        ]
-        
-        for scenario in circuit_breaker_scenarios:
-            # Verify that workflow triggering respects circuit breaker state
-            self.assertIn('should_trigger', scenario)
-    
     def test_workflow_integration_error_handling(self):
         """Test error handling in workflow integration"""
         
@@ -1356,23 +1342,6 @@ class TestBudgetRefreshFunctionality(unittest.TestCase):
         self.assertIn('refresh_count', expected_audit_event['detail'])
         self.assertIn('was_suspended', expected_audit_event['detail'])
     
-    def test_circuit_breaker_prevents_budget_refresh(self):
-        """Test that circuit breaker prevents budget refresh when disabled"""
-        
-        # Test circuit breaker scenarios
-        circuit_breaker_scenarios = [
-            {'circuit_breaker_enabled': False, 'should_refresh': False},
-            {'circuit_breaker_enabled': True, 'should_refresh': True},
-            {'emergency_stop_active': True, 'should_refresh': False},
-            {'emergency_stop_active': False, 'should_refresh': True}
-        ]
-        
-        for scenario in circuit_breaker_scenarios:
-            # Verify that refresh respects circuit breaker state
-            if not scenario.get('circuit_breaker_enabled', True):
-                self.assertFalse(scenario['should_refresh'])
-            if scenario.get('emergency_stop_active', False):
-                self.assertFalse(scenario['should_refresh'])
 
 
 if __name__ == '__main__':

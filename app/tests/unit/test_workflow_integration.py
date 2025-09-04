@@ -258,7 +258,6 @@ class TestWorkflowIntegration(unittest.TestCase):
         """Test that workflow configuration parameters are created"""
         # Global configuration parameters
         expected_global_params = [
-            "circuit_breaker_enabled",
             "emergency_stop_active",
             "maintenance_mode",
             "thresholds_percent_warn",

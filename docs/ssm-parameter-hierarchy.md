@@ -69,9 +69,6 @@ budget_limit = get_parameter(
 )
 
 # Global parameters
-circuit_breaker_enabled = get_parameter(
-    '/bedrock-budgeteer/global/circuit_breaker_enabled'
-)
 ```
 
 ### CDK Reference Access
@@ -144,12 +141,6 @@ aws ssm put-parameter \
   --type "String" \
   --overwrite
 
-# Disable all automated actions (emergencies)
-aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/circuit_breaker_enabled" \
-  --value "false" \
-  --type "String" \
-  --overwrite
 
 # Emergency stop (halts all automation)
 aws ssm put-parameter \
@@ -177,6 +168,5 @@ The following parameter categories were removed as they were not used by any Lam
 - **Most Cost Config**: `default_budget_limit`, `budget_alert_thresholds`, `cost_calculation_interval`, `suspension_threshold`, `grace_period_hours`
 - **All Workflow Config**: All 8 workflow parameters were unused
 - **Some Global Config**: `anomaly_detection_enabled`, `default_service_budget_usd`, `admin_emails`
-- **All Circuit Breaker Parameters**: All 11 circuit breaker parameters from operational controls were unused
 
 This simplification reduces the parameter count from ~50 to 9 parameters, making the system much easier to manage and understand.

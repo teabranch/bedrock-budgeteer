@@ -305,35 +305,6 @@ class TestIAMUtilitiesLambda(unittest.TestCase):
         self.assertIn('inline_policies', expected_backup_structure)
     
     @patch('boto3.client')
-    def test_emergency_override_check_global_circuit_breaker(self, mock_boto3_client):
-        """Test emergency override check for global circuit breaker"""
-        # Setup mocks
-        mock_boto3_client.return_value = self.mock_ssm_client
-        
-        # Mock SSM response - circuit breaker disabled
-        self.mock_ssm_client.get_parameter.return_value = {
-            'Parameter': {'Value': 'false'}
-        }
-        
-        # Test event (only Bedrock API keys supported)
-        test_event = {
-            'principal_id': 'BedrockAPIKey-test123',
-            'check_type': 'global'
-        }
-        
-        # Expected result when circuit breaker is disabled
-        expected_result = {
-            'override_active': True,
-            'override_reason': 'Global circuit breaker disabled',
-            'proceed_with_workflow': False
-        }
-        
-        # Verify override detection logic structure
-        self.assertIn('override_active', expected_result)
-        self.assertIn('override_reason', expected_result)
-        self.assertIn('proceed_with_workflow', expected_result)
-    
-    @patch('boto3.client')
     def test_apply_restriction_stage1(self, mock_boto3_client):
         """Test applying Stage 1 restrictions (expensive models only)"""
         # Setup mocks

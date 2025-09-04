@@ -9,7 +9,7 @@ Bedrock Budgeteer is an enterprise-grade solution that automatically monitors an
 - **Real-time cost tracking**: Monitors every Bedrock API call and calculates token-based costs using the AWS Pricing API
 - **Automated budget enforcement**: Sets spending limits per user/API key with progressive controls (warnings → grace period → suspension)
 - **Smart notifications**: Multi-channel alerts via email, Slack, and SMS
-- **Operational safety**: Built-in circuit breakers, audit trails, and emergency controls
+- **Operational safety**: Built-in audit trails and emergency controls
 - **Zero-touch operation**: Fully serverless with automatic user setup and budget initialization
 
 ### Key Features
@@ -27,7 +27,6 @@ Bedrock Budgeteer is an enterprise-grade solution that automatically monitors an
 ✅ **Enterprise-Ready**
 - Multi-channel notifications (Email, Slack, SMS)
 - Comprehensive audit trails and compliance logging
-- Circuit breaker for emergency situations
 - IAM policy-based access control
 
 ✅ **Serverless & Cost-Optimized**
@@ -251,23 +250,6 @@ aws ssm put-parameter \
 | `grace_period_seconds` | 300 | Grace period before suspension |
 | `budget_refresh_period_days` | 30 | Days between budget resets |
 
-### Emergency Controls
-
-```bash
-# Emergency stop - disables all automated actions
-aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/circuit_breaker_enabled" \
-  --value "false" \
-  --type "String" \
-  --overwrite
-
-# Re-enable automation
-aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/circuit_breaker_enabled" \
-  --value "true" \
-  --type "String" \
-  --overwrite
-```
 
 ## 📊 Usage
 
@@ -504,16 +486,6 @@ aws cloudwatch put-metric-alarm \
 
 ## 🚨 Emergency Procedures
 
-### Circuit Breaker (Emergency Stop)
-```bash
-# Immediately disable all automated actions
-aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/circuit_breaker_enabled" \
-  --value "false" \
-  --overwrite
-
-# Users will continue to receive alerts but no suspensions will occur
-```
 
 ### Manual User Restoration
 ```bash

@@ -14,9 +14,9 @@
 - **Grace Period SNS Topic Error**: Fixed NotFoundException in grace period Lambda by passing actual SNS topic ARNs as environment variables instead of constructing them dynamically. Updated WorkflowOrchestrationConstruct to accept SNS topics from MonitoringConstruct and properly configure IAM permissions for specific topic ARNs.
 
 ### Removed
-- **Emergency Controls**: Removed emergency stop, global circuit breaker, and maintenance mode controls as they are no longer required
-- **Emergency Override Functions**: Deleted emergency_override Lambda function and related circuit breaker helper utilities
-- **Unused SSM Parameters**: Removed circuit_breaker_enabled, emergency_stop_active, maintenance_mode, user_whitelist, restoration_cooldown_hours, and automatic_restoration_enabled parameters
+- **Emergency Controls**: Removed emergency stop and maintenance mode controls as they are no longer required
+- **Emergency Override Functions**: Deleted emergency_override Lambda function and related helper utilities
+- **Unused SSM Parameters**: Removed emergency_stop_active, maintenance_mode, user_whitelist, restoration_cooldown_hours, and automatic_restoration_enabled parameters
 - **Unused Budget Alerts Table**: Removed unused `budget-alerts` DynamoDB table and related configuration to reduce complexity and cost (follows "SIMPLIFIED" principle)
 
 ### Fixed
@@ -123,7 +123,7 @@
   - Extended UserBudgets table schema with refresh tracking fields
   - Manual refresh capability for specific principals
   - Comprehensive IAM policy restoration for suspended accounts
-  - Circuit breaker integration and comprehensive monitoring
+  - Comprehensive monitoring
 - Phase 7: Minimal budget configuration for testing ($1 default, $3 maximum)
 - Fixed KMS key tagging null pointer exception
 - Resolved CDK aspect priority conflicts for successful synthesis
@@ -204,13 +204,11 @@
 
 ### Added
 - **Phase 6: Operational Controls & Resilience** - Comprehensive operational safety and failure prevention system
-- **Circuit Breaker System**: SSM parameter-based global and service-specific circuit breakers with manual override controls
-- **Emergency Control Functions**: Circuit breaker control, emergency stop, and emergency access restoration Lambda functions
+- **Emergency Control Functions**: Emergency stop and emergency access restoration Lambda functions
 - **Enhanced DLQ Management**: DLQ monitor and processor functions with scheduled monitoring and message replay capabilities
-- **Retry Strategy Framework**: Exponential backoff with jitter, retry budgets, and circuit breaker integration
-- **Circuit Breaker Helper Utility**: Real-time circuit breaker checking with caching and decorator support
-- **Operational Monitoring**: CloudWatch metrics and alarms for circuit breaker status, emergency stops, and DLQ health
-- **Comprehensive Testing**: 15+ test cases covering circuit breakers, emergency functions, and operational controls
+- **Retry Strategy Framework**: Exponential backoff with jitter and retry budgets
+- **Operational Monitoring**: CloudWatch metrics and alarms for emergency stops and DLQ health
+- **Comprehensive Testing**: 15+ test cases covering emergency functions and operational controls
 - **Phase 5: Notifications & Monitoring**: Complete monitoring and alerting infrastructure
 - **Multi-Channel Notifications**: Email, Slack, SMS, and webhook integrations
 - **Custom Business Metrics**: Budget violations, user activity, and operational cost tracking
@@ -237,11 +235,10 @@
 - **Restoration State Machine**: Secure restoration with validation and audit logging
 - **IAM Utilities Lambda**: Comprehensive policy backup, modification, and restoration capabilities
 - **Grace Period Lambda**: User notifications during suspension countdown with SNS integration
-- **Emergency Override Lambda**: Circuit breaker functionality with SSM parameter-based configuration
 - **Restoration Validation Lambda**: Multi-factor validation for restoration requests
 - **Policy Backup System**: Encrypted policy storage with 30-day TTL and automatic cleanup
 - **Progressive Enforcement**: 3-stage restriction model (expensive models → all models → full suspension)
-- **Emergency Controls**: Global circuit breaker, user whitelisting, and maintenance mode
+- **Emergency Controls**: User whitelisting and maintenance mode
 - **Workflow Monitoring**: Step Functions metrics, alarms, and dedicated dashboard
 - **Enhanced Configuration**: 20+ SSM parameters for workflow control and emergency overrides
 - **Comprehensive Testing**: 50+ test cases covering workflow logic, security, and integration

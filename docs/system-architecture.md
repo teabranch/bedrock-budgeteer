@@ -8,7 +8,7 @@ Bedrock Budgeteer is a comprehensive serverless budget monitoring and control sy
 
 - **Real-time cost visibility**: Compute token-based costs using the AWS Pricing API
 - **Proactive controls**: Multi-level thresholds with alerts and graduated suspension system
-- **Operational safety**: Circuit breaker, DLQs, audit trails, and idempotent workflows
+- **Operational safety**: DLQs, audit trails, and idempotent workflows
 - **Separation of concerns**: Clear boundaries across ingestion, evaluation, enforcement, and audit
 
 ## High-Level Architecture
@@ -350,10 +350,6 @@ sequenceDiagram
 - State reconciliation prevents drift
 - Unique event IDs prevent duplicate processing
 
-**Circuit Breaker:**
-- Global emergency stop via SSM parameter
-- Disables automated suspension while maintaining alerts
-- Manual override for critical situations
 
 ### Scalability
 

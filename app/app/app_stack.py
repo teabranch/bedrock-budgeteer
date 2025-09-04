@@ -125,7 +125,7 @@ class BedrockBudgeteerStack(Stack):
         self._enable_phase5_features()
         
         # Phase 6: Operational Controls removed per changelog - see 2025-09-02 updates
-        # Emergency controls, circuit breakers, and maintenance mode no longer needed
+        # Emergency controls and maintenance mode no longer needed
         
         # Note: Log group deletion policies are handled by disabling CDK auto-creation
         # and managing log groups explicitly with RemovalPolicy.DESTROY where needed
@@ -326,7 +326,7 @@ class BedrockBudgeteerStack(Stack):
         """Expose workflow Lambda functions"""
         return self.workflow_orchestration.workflow_functions
     
-    # Operational control functions and circuit breaker parameters removed
+    # Operational control functions removed
     # per changelog - see 2025-09-02 updates
     
     @property

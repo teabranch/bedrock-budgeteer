@@ -203,7 +203,6 @@ Deep Archive (365+ days): Deep Archive
 
 ## Emergency Cost Controls
 
-### Circuit Breaker System
 The system includes built-in cost protection mechanisms:
 - **Budget Thresholds**: Automatic alerts at 80%, 90%, and 95%
 - **Emergency Stop**: System-wide halt capability at 100% budget
