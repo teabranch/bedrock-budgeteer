@@ -1,0 +1,11 @@
+tracking/*
+.cursor/rules/*
+.pytest_cache/*
+.venv/*
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+phases/*
+venv/*

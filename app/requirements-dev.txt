@@ -1,0 +1,15 @@
+# Development and Testing Dependencies for Bedrock Budgeteer
+
+# Core Testing Framework
+pytest>=7.4.0                    # Core testing framework
+pytest-cov>=4.1.0               # Coverage reporting
+pytest-mock>=3.11.0             # Mocking utilities
+pytest-xdist>=3.3.0             # Parallel test execution
+
+# AWS Testing and Mocking
+moto>=4.2.0                      # AWS service mocking for tests
+boto3-stubs[essential]>=1.35.0   # Type hints for boto3
+
+# AWS CDK Testing
+aws-cdk-lib>=2.211.0             # CDK library (also in main requirements)
+constructs>=10.0.0               # CDK constructs
