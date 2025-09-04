@@ -60,7 +60,6 @@ graph TB
         subgraph "Notification Channels"
             EMAIL[Email<br/>Subscriptions]
             SLACK[Slack<br/>Webhook Integration]
-            PD[PagerDuty<br/>Critical Alerts]
             SMS[SMS<br/>High Priority]
         end
         
@@ -511,7 +510,6 @@ graph LR
     subgraph "Notification Channels"
         N1[Email]
         N2[Slack]
-        N3[PagerDuty]
         N4[SMS]
         N5[Webhook]
     end
@@ -619,7 +617,6 @@ graph TB
     subgraph "External Services"
         EXT1[Email Providers]
         EXT2[Slack Webhook]
-        EXT3[PagerDuty API]
         EXT4[SMS Providers]
     end
     

@@ -295,7 +295,6 @@ class TestNotificationChannels(unittest.TestCase):
     @patch.dict(os.environ, {
         'OPS_EMAIL': 'ops@example.com',
         'SLACK_WEBHOOK_URL': 'https://hooks.slack.com/test',
-        'PAGERDUTY_INTEGRATION_KEY': 'test-key',
         'OPS_PHONE_NUMBER': '+1234567890',
         'EXTERNAL_WEBHOOK_URL': 'https://webhook.example.com',
         'WEBHOOK_AUTH_TOKEN': 'test-token'
@@ -317,20 +316,16 @@ class TestNotificationChannels(unittest.TestCase):
         
         # Look for notification Lambda functions
         slack_function_found = False
-        pagerduty_function_found = False
         webhook_function_found = False
         
         for function_id, function_props in lambda_functions.items():
             function_name = function_props["Properties"]["FunctionName"]
             if "slack-notifications" in function_name:
                 slack_function_found = True
-            elif "pagerduty-notifications" in function_name:
-                pagerduty_function_found = True
             elif "webhook-notifications" in function_name:
                 webhook_function_found = True
         
         self.assertTrue(slack_function_found, "Slack notification function should be created")
-        self.assertTrue(pagerduty_function_found, "PagerDuty notification function should be created")
         self.assertTrue(webhook_function_found, "Webhook notification function should be created")
         
         # Should have SNS subscriptions
@@ -495,7 +490,7 @@ class TestSecurityAndCompliance(unittest.TestCase):
         notification_functions = []
         for function_id, function_props in lambda_functions.items():
             function_name = function_props["Properties"]["FunctionName"]
-            if any(keyword in function_name for keyword in ["slack", "pagerduty", "webhook"]):
+            if any(keyword in function_name for keyword in ["slack", "webhook"]):
                 notification_functions.append(function_id)
         
         if notification_functions:

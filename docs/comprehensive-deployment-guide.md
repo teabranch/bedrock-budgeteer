@@ -150,8 +150,6 @@ export OPS_EMAIL="admin@company.com"
 # Set Slack webhook for notifications (optional)
 export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
-# Set PagerDuty integration key (optional)
-export PAGERDUTY_INTEGRATION_KEY="your-integration-key"
 ```
 
 ### Step 4: Synthesize CloudFormation Template

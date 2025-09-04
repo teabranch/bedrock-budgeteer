@@ -218,7 +218,6 @@ graph TB
 **Multi-Channel Notifications:**
 - Email subscriptions
 - Slack webhook integration
-- PagerDuty integration for critical alerts
 - SMS for high-severity alerts
 - Generic webhook for external integrations
 

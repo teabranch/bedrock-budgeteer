@@ -212,7 +212,7 @@
 - **Operational Monitoring**: CloudWatch metrics and alarms for circuit breaker status, emergency stops, and DLQ health
 - **Comprehensive Testing**: 15+ test cases covering circuit breakers, emergency functions, and operational controls
 - **Phase 5: Notifications & Monitoring**: Complete monitoring and alerting infrastructure
-- **Multi-Channel Notifications**: Email, Slack, PagerDuty, SMS, and webhook integrations
+- **Multi-Channel Notifications**: Email, Slack, SMS, and webhook integrations
 - **Custom Business Metrics**: Budget violations, user activity, and operational cost tracking
 - **Specialized Dashboards**: System overview, business metrics, workflow, and ingestion monitoring
 - **Environment-Aware Configuration**: Production, staging, and development notification routing

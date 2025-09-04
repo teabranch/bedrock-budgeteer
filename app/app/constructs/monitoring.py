@@ -717,16 +717,6 @@ class MonitoringConstruct(Construct):
                 sns_subs.LambdaSubscription(slack_function)
             )
     
-    def add_pagerduty_subscription(self, topic_name: str, integration_key: str) -> None:
-        """Add PagerDuty integration subscription to SNS topic"""
-        if topic_name in self.topics:
-            # Create Lambda function for PagerDuty integration
-            pagerduty_function = self._create_pagerduty_notification_lambda(integration_key)
-            
-            # Subscribe Lambda to SNS topic
-            self.topics[topic_name].add_subscription(
-                sns_subs.LambdaSubscription(pagerduty_function)
-            )
     
     def add_webhook_subscription(self, topic_name: str, webhook_url: str, headers: Optional[Dict[str, str]] = None) -> None:
         """Add generic webhook subscription to SNS topic"""
@@ -1134,74 +1124,6 @@ def handler(event, context):
         
         return slack_function
     
-    def _create_pagerduty_notification_lambda(self, integration_key: str):
-        """Create Lambda function for PagerDuty notifications"""
-        from aws_cdk import aws_lambda as lambda_
-        
-        pagerduty_function = lambda_.Function(
-            self, "PagerDutyNotificationFunction",
-            function_name=f"bedrock-budgeteer-{self.environment_name}-pagerduty-notifications",
-            runtime=lambda_.Runtime.PYTHON_3_9,
-            handler="index.handler",
-            code=lambda_.Code.from_inline(f"""
-import json
-import urllib3
-import uuid
-from datetime import datetime
-
-def handler(event, context):
-    integration_key = "{integration_key}"
-    
-    # Parse SNS message
-    for record in event['Records']:
-        sns_message = json.loads(record['Sns']['Message'])
-        subject = record['Sns']['Subject']
-        
-        # Create PagerDuty event
-        pagerduty_event = {{
-            "routing_key": integration_key,
-            "event_action": "trigger",
-            "dedup_key": f"bedrock-budgeteer-{{subject.replace(' ', '-').lower()}}",
-            "payload": {{
-                "summary": subject,
-                "source": "bedrock-budgeteer",
-                "severity": "critical" if "high-severity" in record['Sns']['TopicArn'] else "warning",
-                "timestamp": datetime.utcnow().isoformat(),
-                "component": "budget-monitoring",
-                "group": "bedrock-infrastructure",
-                "class": "budget-violation",
-                "custom_details": {{
-                    "message": sns_message,
-                    "environment": "{self.environment_name}",
-                    "topic_arn": record['Sns']['TopicArn']
-                }}
-            }}
-        }}
-        
-        # Send to PagerDuty
-        http = urllib3.PoolManager()
-        response = http.request(
-            'POST',
-            'https://events.pagerduty.com/v2/enqueue',
-            body=json.dumps(pagerduty_event),
-            headers={{'Content-Type': 'application/json'}}
-        )
-        
-        print(f"PagerDuty notification sent: {{response.status}}")
-    
-    return {{'statusCode': 200}}
-"""),
-            timeout=Duration.seconds(30),
-        )
-        
-        # Grant SNS invoke permissions
-        pagerduty_function.add_permission(
-            "SNSInvokePermission",
-            principal=iam.ServicePrincipal("sns.amazonaws.com"),
-            action="lambda:InvokeFunction"
-        )
-        
-        return pagerduty_function
     
     def _create_webhook_notification_lambda(self, webhook_url: str, headers: Dict[str, str]):
         """Create Lambda function for generic webhook notifications"""

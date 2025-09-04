@@ -241,11 +241,6 @@ class BedrockBudgeteerStack(Stack):
             self.monitoring.add_slack_subscription("high_severity", slack_webhook)
             self.monitoring.add_slack_subscription("operational_alerts", slack_webhook)
         
-        # PagerDuty integration for critical alerts
-        pagerduty_key = os.getenv("PAGERDUTY_INTEGRATION_KEY")
-        if pagerduty_key:
-            self.monitoring.add_pagerduty_subscription("high_severity", pagerduty_key)
-        
         # SMS for critical budget alerts
         ops_phone = os.getenv("OPS_PHONE_NUMBER")
         if ops_phone:

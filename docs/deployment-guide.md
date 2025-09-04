@@ -147,7 +147,6 @@ export ALERT_EMAIL=alerts@yourcompany.com # Alert notifications email
 
 # Advanced Notification Channels
 export SLACK_WEBHOOK_URL=https://hooks.slack.com/your-webhook
-export PAGERDUTY_INTEGRATION_KEY=your-integration-key
 export OPS_PHONE_NUMBER=+1234567890      # For SMS alerts
 export EXTERNAL_WEBHOOK_URL=https://webhook.yourcompany.com
 export WEBHOOK_AUTH_TOKEN=your-auth-token
@@ -330,7 +329,6 @@ cdk deploy \
 ```bash
 # Deploy with all notification channels
 export SLACK_WEBHOOK_URL=https://hooks.slack.com/your-webhook
-export PAGERDUTY_INTEGRATION_KEY=your-key
 export OPS_PHONE_NUMBER=+1234567890
 
 cdk deploy
