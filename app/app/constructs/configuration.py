@@ -24,6 +24,7 @@ class ConfigurationConstruct(Construct):
         # Create parameter hierarchy - only parameters that are actually used
         self._create_cost_config()  # Only budget_refresh_period_days is used
         self._create_global_config()  # Thresholds, budgets, and control flags
+        self._create_monitoring_config()  # Log retention and monitoring settings
         
         # Tags are applied by TaggingFramework aspects
     
@@ -86,7 +87,17 @@ class ConfigurationConstruct(Construct):
     
     # Removed _create_security_config - all parameters were unused
     
-    # Removed _create_monitoring_config - all parameters were unused
+    def _create_monitoring_config(self) -> None:
+        """Create monitoring configuration parameters"""
+        monitoring_config = self._get_monitoring_config()
+        
+        for key, config in monitoring_config.items():
+            self.parameters[f"monitoring_{key}"] = self._create_standard_parameter(
+                category="monitoring",
+                key=key,
+                value=config["value"],
+                description=config["description"]
+            )
     
     # Removed _create_integration_config - all parameters were unused
     
@@ -106,7 +117,16 @@ class ConfigurationConstruct(Construct):
     
     # Removed _get_security_config - all parameters were unused
     
-    # Removed _get_monitoring_config - all parameters were unused
+    def _get_monitoring_config(self) -> Dict[str, Dict[str, str]]:
+        """Get monitoring configuration - log retention and monitoring settings"""
+        monitoring_config = {
+            "log_retention_days": {
+                "value": "7",
+                "description": "CloudWatch log group retention period in days"
+            }
+        }
+        
+        return monitoring_config
     
     # Removed _get_integration_config - all parameters were unused
     

@@ -2,7 +2,7 @@
 Workflow Base Class
 Provides common utilities and base functionality for workflow state machines
 """
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from aws_cdk import (
     Duration,
     RemovalPolicy,
@@ -76,14 +76,15 @@ class WorkflowBase:
     def create_log_group(
         self,
         log_group_id: str,
-        workflow_name: str
+        workflow_name: str,
+        log_retention_days: Optional[logs.RetentionDays] = None
     ) -> logs.LogGroup:
         """Create a log group for the workflow"""
         return logs.LogGroup(
             self.scope,
             log_group_id,
             log_group_name=f"/aws/stepfunctions/bedrock-budgeteer-{workflow_name}-{self.environment_name}",
-            retention=logs.RetentionDays.ONE_MONTH,
+            retention=log_retention_days or logs.RetentionDays.ONE_WEEK,  # Default to 7 days
             removal_policy=RemovalPolicy.DESTROY
         )
     
@@ -92,10 +93,11 @@ class WorkflowBase:
         state_machine_id: str,
         workflow_name: str,
         definition: sfn.IChainable,
-        timeout_minutes: int = 30
+        timeout_minutes: int = 30,
+        log_retention_days: Optional[logs.RetentionDays] = None
     ) -> sfn.StateMachine:
         """Create a state machine with standardized configuration"""
-        log_group = self.create_log_group(f"{state_machine_id}Logs", workflow_name)
+        log_group = self.create_log_group(f"{state_machine_id}Logs", workflow_name, log_retention_days)
         
         return sfn.StateMachine(
             self.scope,

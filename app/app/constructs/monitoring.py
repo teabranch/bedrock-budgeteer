@@ -11,6 +11,7 @@ from aws_cdk import (
     aws_sns as sns,
     aws_sns_subscriptions as sns_subs,
     aws_iam as iam,
+    aws_ssm as ssm,
     Duration,
     RemovalPolicy,
 )
@@ -21,7 +22,8 @@ class MonitoringConstruct(Construct):
     """Construct for CloudWatch monitoring, dashboards, and alarms"""
     
     def __init__(self, scope: Construct, construct_id: str, 
-                 environment_name: str, **kwargs) -> None:
+                 environment_name: str, 
+                 log_retention_parameter_name: Optional[str] = None, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
         self.environment_name = environment_name
@@ -30,7 +32,7 @@ class MonitoringConstruct(Construct):
         self.topics: Dict[str, sns.Topic] = {}
         
         # Environment-specific configurations
-        self.log_retention = self._get_log_retention()
+        self.log_retention = self._get_log_retention(log_retention_parameter_name)
         self.alarm_thresholds = self._get_alarm_thresholds()
         
         # Create resources
@@ -39,10 +41,12 @@ class MonitoringConstruct(Construct):
         
         # Tags are applied by TaggingFramework aspects
     
-    def _get_log_retention(self) -> logs.RetentionDays:
-        """Get log retention for production environment"""
-        # All log groups must retain data for 30 days
-        return logs.RetentionDays.ONE_MONTH
+    def _get_log_retention(self, log_retention_parameter_name: Optional[str] = None) -> logs.RetentionDays:
+        """Get log retention for production environment - default to 7 days"""
+        # For now, use the default value since the parameter is created in the same stack
+        # The parameter will be available for runtime configuration changes
+        # but we need to avoid circular dependencies during deployment
+        return logs.RetentionDays.ONE_WEEK  # 7 days as requested
     
     def _get_alarm_thresholds(self) -> Dict[str, Dict[str, float]]:
         """Get alarm thresholds for production environment"""

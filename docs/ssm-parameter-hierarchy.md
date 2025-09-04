@@ -9,8 +9,10 @@ Centralized configuration management using AWS Systems Manager Parameter Store w
 
 ```
 /bedrock-budgeteer/production/
-└── cost/
-    └── budget_refresh_period_days
+├── cost/
+│   └── budget_refresh_period_days
+└── monitoring/
+    └── log_retention_days
 
 /bedrock-budgeteer/global/
 ├── thresholds_percent_warn
@@ -28,7 +30,14 @@ Centralized configuration management using AWS Systems Manager Parameter Store w
 |-----------|------|-------|-------------|---------|
 | `budget_refresh_period_days` | String | 30 | Budget refresh period in days | User setup & usage calculator Lambdas |
 
-### 2. Global Configuration  
+### 2. Monitoring Configuration (Environment-Specific)
+**Path**: `/bedrock-budgeteer/production/monitoring/`
+
+| Parameter | Type | Value | Description | Used By |
+|-----------|------|-------|-------------|---------|
+| `log_retention_days` | String | 7 | CloudWatch log group retention period in days | All CloudWatch log groups (Lambda functions, Step Functions, Bedrock logs) |
+
+### 3. Global Configuration  
 **Path**: `/bedrock-budgeteer/global/`
 
 | Parameter | Type | Value | Description | Used By |

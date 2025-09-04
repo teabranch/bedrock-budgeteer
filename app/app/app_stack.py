@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 from aws_cdk import (
     Stack,
     aws_kms as kms,
+    aws_logs as logs,
 )
 from constructs import Construct
 
@@ -86,12 +87,14 @@ class BedrockBudgeteerStack(Stack):
             environment_name=environment_name,
             s3_bucket=self.log_storage.logs_bucket,
             kms_key=self.kms_key,
-            usage_calculator_function=self.core_processing.functions["usage_calculator"]
+            usage_calculator_function=self.core_processing.functions["usage_calculator"],
+            log_retention_days=logs.RetentionDays.ONE_WEEK  # Use 7 days default, should match parameter
         )
         
         self.monitoring = MonitoringConstruct(
             self, "Monitoring",
-            environment_name=environment_name
+            environment_name=environment_name,
+            log_retention_parameter_name=self.configuration.get_parameter_reference("monitoring", "log_retention_days")
         )
         
         # Initialize workflow orchestration

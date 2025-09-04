@@ -28,6 +28,7 @@ class EventIngestionConstruct(Construct):
                  s3_bucket: Optional[s3.Bucket] = None,
                  kms_key: Optional[kms.IKey] = None,
                  usage_calculator_function: Optional[lambda_.Function] = None,
+                 log_retention_days: Optional[logs.RetentionDays] = None,
                  **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
         
@@ -35,6 +36,7 @@ class EventIngestionConstruct(Construct):
         self.s3_bucket = s3_bucket
         self.kms_key = kms_key
         self.usage_calculator_function = usage_calculator_function
+        self.log_retention_days = log_retention_days or logs.RetentionDays.ONE_WEEK  # Default to 7 days
         
         # Initialize storage for created resources
         self.cloudtrail_trails: Dict[str, cloudtrail.Trail] = {}
@@ -309,7 +311,7 @@ class EventIngestionConstruct(Construct):
         # Create log group with KMS encryption if available
         log_group_props = {
             "log_group_name": f"/aws/bedrock/bedrock-budgeteer-{self.environment_name}-invocation-logs",
-            "retention": logs.RetentionDays.ONE_MONTH,
+            "retention": self.log_retention_days,
             "removal_policy": self.removal_policy
         }
         
