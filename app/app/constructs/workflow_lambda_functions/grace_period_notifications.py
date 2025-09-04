@@ -59,21 +59,15 @@ def send_initial_grace_notification(principal_id, grace_period_seconds):
     deadline = datetime.now(timezone.utc) + timedelta(seconds=grace_period_seconds)
     
     message = f\"\"\"
-Budget Exceeded - Grace Period Started
+Hi there! 👋
 
-User: {principal_id}
-Grace Period: {grace_minutes} minutes
-Deadline: {deadline.strftime('%Y-%m-%d %H:%M:%S UTC')}
+Your Bedrock usage has reached your budget limit. 
 
-Your AWS Bedrock access budget has been exceeded. 
-You have {grace_minutes} minutes to review your usage before access restrictions are applied.
+You have {grace_minutes} minutes to wrap up any current work before access is temporarily paused. Your access will automatically return when your budget refreshes, or you can contact your administrator if you need immediate assistance.
 
-Access will be progressively restricted in the following stages:
-1. Expensive models (Claude-3 Opus, Claude-3.5 Sonnet)
-2. All model invocations
-3. Full Bedrock access suspension
+Thanks for being mindful of your usage!
 
-If you believe this is an error, please contact your administrator immediately.
+The Bedrock Team
 \"\"\"
     
     try:
@@ -86,7 +80,7 @@ If you believe this is an error, please contact your administrator immediately.
         sns.publish(
             TopicArn=high_severity_topic_arn,
             Message=message,
-            Subject=f"Bedrock Budget Exceeded - Grace Period: {principal_id}"
+            Subject=f"Bedrock Budget Reached - {grace_minutes} minutes remaining"
         )
         
         # Publish event for audit trail
@@ -120,15 +114,13 @@ def send_countdown_notification(principal_id, remaining_seconds):
     remaining_minutes = remaining_seconds // 60
     
     message = f\"\"\"
-Budget Grace Period - {remaining_minutes} Minutes Remaining
+Quick reminder! ⏰
 
-User: {principal_id}
-Time Remaining: {remaining_minutes} minutes
+You have {remaining_minutes} minutes left before your Bedrock access pauses.
 
-Your Bedrock access budget grace period is ending soon.
-Access restrictions will be applied automatically when the grace period expires.
+Please finish up any current work. Need more time? Just reach out to your administrator.
 
-Contact your administrator if you need assistance.
+The Bedrock Team
 \"\"\"
     
     try:
@@ -140,7 +132,7 @@ Contact your administrator if you need assistance.
         sns.publish(
             TopicArn=operational_alerts_topic_arn,
             Message=message,
-            Subject=f"Bedrock Budget Grace Period Ending: {principal_id}"
+            Subject=f"Bedrock Access - {remaining_minutes} minutes remaining"
         )
         
         return {
@@ -157,17 +149,15 @@ Contact your administrator if you need assistance.
 def send_final_warning(principal_id):
     \"\"\"Send final warning before suspension\"\"\"
     message = f\"\"\"
-Budget Grace Period Expired - Implementing Restrictions
+Bedrock Access Paused 🛑
 
-User: {principal_id}
+Your budget limit has been reached and access is now paused.
 
-The grace period for budget violation has expired.
-Bedrock access restrictions are now being implemented.
+Don't worry - your access will automatically return when your budget refreshes! If you need access sooner, just contact your administrator.
 
-Stage 1: Expensive model access will be restricted first.
-Further restrictions may follow based on configuration.
+Thanks for your understanding!
 
-Contact your administrator for budget increase or restoration procedures.
+The Bedrock Team
 \"\"\"
     
     try:
@@ -179,7 +169,7 @@ Contact your administrator for budget increase or restoration procedures.
         sns.publish(
             TopicArn=high_severity_topic_arn,
             Message=message,
-            Subject=f"Bedrock Access Restrictions Implemented: {principal_id}"
+            Subject=f"Bedrock Access Paused - Budget Limit Reached"
         )
         
         events.put_events(
@@ -208,16 +198,13 @@ Contact your administrator for budget increase or restoration procedures.
 def send_restoration_notification(principal_id):
     \"\"\"Send notification when user access has been restored\"\"\"
     message = f\"\"\"
-Bedrock Access Restored
+Welcome back! 🎉
 
-User: {principal_id}
+Your Bedrock access has been restored and you're all set to continue your work.
 
-Your AWS Bedrock access has been successfully restored.
-All previous access restrictions have been removed.
+Your budget has been reset and you can now use Bedrock services again. Happy creating!
 
-Your budget tracking has been reset and normal access is now available.
-
-If you have any questions, please contact your administrator.
+The Bedrock Team
 \"\"\"
     
     try:
@@ -229,7 +216,7 @@ If you have any questions, please contact your administrator.
         sns.publish(
             TopicArn=operational_alerts_topic_arn,
             Message=message,
-            Subject=f"Bedrock Access Restored: {principal_id}"
+            Subject=f"Bedrock Access Restored - You're back!"
         )
         
         events.put_events(
@@ -258,21 +245,15 @@ If you have any questions, please contact your administrator.
 def send_automatic_restoration_notification(principal_id):
     \"\"\"Send automatic restoration complete notification\"\"\"
     message = f\"\"\"
-Budget Period Refreshed - Access Automatically Restored
+Good news! 🌟
 
-User: {principal_id}
-Action: Automatic restoration completed
-Budget Period: Reset
-Timestamp: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
+Your budget has refreshed and your Bedrock access is back!
 
-Your budget refresh period has been reached and your Bedrock access has been automatically restored.
+You can now resume using Bedrock services with a fresh budget. We've reset your spending counter to $0.
 
-Your spending counter has been reset to $0.00 and you can now resume using Amazon Bedrock services within your budget limits.
+Happy creating!
 
-Please monitor your usage to avoid future suspensions.
-
-Best regards,
-Bedrock Budgeteer System
+The Bedrock Team
 \"\"\"
     
     try:
@@ -284,7 +265,7 @@ Bedrock Budgeteer System
         sns.publish(
             TopicArn=operational_alerts_topic_arn,
             Message=message,
-            Subject=f"Bedrock Budget Refreshed - Access Restored: {principal_id}"
+            Subject=f"Budget Refreshed - Bedrock Access is Back!"
         )
         
         events.put_events(
