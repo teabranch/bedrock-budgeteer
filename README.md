@@ -94,6 +94,12 @@ pip install -r requirements-dev.txt
 
 ### Step 3: Configure AWS Credentials
 
+You must export the following CDK variables:
+
+```bash
+export CDK_DEFAULT_ACCOUNT=31208376124
+export CDK_DEFAULT_REGION=us-east-1
+```
 Choose one of these methods:
 
 **Option A: AWS CLI Configuration**
