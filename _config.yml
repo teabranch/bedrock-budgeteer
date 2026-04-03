@@ -7,6 +7,9 @@ url: "https://bedrock-budgeteer.teabranch.dev"
 theme: just-the-docs
 color_scheme: anthropic
 
+mermaid:
+  version: "11.14.0"
+
 search_enabled: true
 search:
   button: true
