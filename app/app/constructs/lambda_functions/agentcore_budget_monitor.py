@@ -108,9 +108,23 @@ def lambda_handler(event, context):
                         table, runtime, grace_period_seconds, 'global_cap'
                     )
 
+        restorations_triggered = _check_budget_refreshes(table, items)
+
+        budgets_exceeded = sum(
+            1 for r in budgeted_runtimes
+            if r.get('status') != 'suspended' and r.get('budget_limit_usd')
+            and float(r['budget_limit_usd']) > 0
+            and (float(r['spent_usd']) / float(r['budget_limit_usd'])) * 100 >= 100
+        )
+
         MetricsPublisher.publish_budget_metric(
             metric_name='MonitoredAgentRuntimes',
             value=len(active_runtimes),
+            unit='Count'
+        )
+        MetricsPublisher.publish_budget_metric(
+            metric_name='AgentBudgetExceeded',
+            value=budgets_exceeded,
             unit='Count'
         )
         MetricsPublisher.publish_budget_metric(
@@ -128,6 +142,7 @@ def lambda_handler(event, context):
             'statusCode': 200,
             'monitored': len(active_runtimes),
             'suspensions_triggered': suspensions_triggered,
+            'restorations_triggered': restorations_triggered,
             'pool_usage_percent': pool_usage_percent if pool_budget > 0 else 0
         }
 
@@ -236,6 +251,55 @@ def _update_threshold_state(table, item, new_state):
                     'threshold_state': new_state
                 }
             )
+
+
+def _check_budget_refreshes(table, items):
+    """Check for suspended runtimes whose budget refresh date has passed"""
+    now = datetime.now(timezone.utc)
+    restorations = 0
+
+    for item in items:
+        if item['runtime_id'] == 'GLOBAL_POOL':
+            continue
+        if item.get('status') != 'suspended':
+            continue
+        refresh_date_str = item.get('budget_refresh_date')
+        if not refresh_date_str:
+            continue
+
+        try:
+            refresh_date = datetime.fromisoformat(refresh_date_str.replace('Z', '+00:00'))
+            if now >= refresh_date:
+                _trigger_restoration_workflow(item)
+                restorations += 1
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid budget_refresh_date for {item['runtime_id']}: {e}")
+
+    return restorations
+
+
+def _trigger_restoration_workflow(runtime):
+    """Start the AgentCore restoration Step Function"""
+    state_machine_arn = os.environ.get('AGENTCORE_RESTORATION_STATE_MACHINE_ARN', '')
+    if not state_machine_arn:
+        logger.error("AGENTCORE_RESTORATION_STATE_MACHINE_ARN not set")
+        return
+
+    sfn_input = {
+        'runtime_id': runtime['runtime_id'],
+        'runtime_name': runtime.get('runtime_name', ''),
+        'role_arn': runtime.get('role_arn', ''),
+        'account_type': 'agentcore_runtime'
+    }
+
+    try:
+        sfn_client.start_execution(
+            stateMachineArn=state_machine_arn,
+            input=json.dumps(sfn_input, default=str)
+        )
+        logger.info(f"Triggered restoration workflow for runtime {runtime['runtime_id']}")
+    except Exception as e:
+        logger.error(f"Error triggering restoration workflow: {e}")
 
 
 def _scan_all(table):

@@ -43,10 +43,19 @@ class TestAgentCoreBudgetMonitorContent(unittest.TestCase):
 
     def test_publishes_metrics(self):
         self.assertIn('MonitoredAgentRuntimes', self.code)
+        self.assertIn('AgentBudgetExceeded', self.code)
         self.assertIn('AgentPoolUtilizationPercent', self.code)
 
     def test_batch_suspension_for_pool(self):
         self.assertIn('suspend_unbudgeted_runtimes', self.code)
+
+    def test_checks_budget_refreshes(self):
+        self.assertIn('_check_budget_refreshes', self.code)
+        self.assertIn('budget_refresh_date', self.code)
+
+    def test_triggers_restoration_workflow(self):
+        self.assertIn('AGENTCORE_RESTORATION_STATE_MACHINE_ARN', self.code)
+        self.assertIn('_trigger_restoration_workflow', self.code)
 
 
 if __name__ == '__main__':

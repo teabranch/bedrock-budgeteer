@@ -365,5 +365,12 @@ class AgentCoreConstruct(Construct):
             timeout=Duration.minutes(30)
         )
 
+        # Pass restoration state machine ARN to budget monitor
+        self.functions["agentcore_budget_monitor"].add_environment(
+            "AGENTCORE_RESTORATION_STATE_MACHINE_ARN",
+            self.restoration_state_machine.state_machine_arn
+        )
+
         # Grant Step Functions permission to invoke Lambda and start executions
         self.suspension_state_machine.grant_start_execution(self.lambda_execution_role)
+        self.restoration_state_machine.grant_start_execution(self.lambda_execution_role)

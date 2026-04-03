@@ -21,6 +21,8 @@ class TestAgentCoreConstructExists(unittest.TestCase):
         self.assertIn('agentcore_budget_manager', source)
         self.assertIn('EventBridge', source)
         self.assertIn('bedrock-agentcore.amazonaws.com', source)
+        self.assertIn('restoration_state_machine', source)
+        self.assertIn('grant_start_execution', source)
 
 
 class TestAgentCoreFeatureFlag(unittest.TestCase):

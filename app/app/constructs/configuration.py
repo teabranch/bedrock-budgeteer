@@ -208,6 +208,10 @@ class ConfigurationConstruct(Construct):
             "critical_threshold_percent": {
                 "value": "90",
                 "description": "Critical threshold for AgentCore budget utilization"
+            },
+            "default_per_agent_budget_usd": {
+                "value": "none",
+                "description": "Default per-agent budget in USD (none = draws from pool)"
             }
         }
 
