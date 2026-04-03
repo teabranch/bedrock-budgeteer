@@ -353,6 +353,45 @@ class SecurityConstruct(Construct):
         
         self.roles["lambda_execution"].add_to_policy(iam_read_policy)
     
+    def add_agentcore_iam_permissions(self) -> None:
+        """Add IAM role management permissions for AgentCore suspension/restoration"""
+        agentcore_iam_policy = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:GetRolePolicy",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:TagRole",
+                "iam:UntagRole",
+                "iam:ListRoleTags"
+            ],
+            resources=["arn:aws:iam::*:role/*"],
+            conditions={
+                "StringEquals": {
+                    "aws:ResourceTag/BedrockBudgeteerManaged": "true"
+                }
+            }
+        )
+
+        self.roles["lambda_execution"].add_to_policy(agentcore_iam_policy)
+
+        # Also need unconditioned permission to tag roles initially
+        # (can't check tag before tag exists)
+        agentcore_tag_policy = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "iam:TagRole",
+                "iam:ListRoleTags"
+            ],
+            resources=["arn:aws:iam::*:role/*"]
+        )
+
+        self.roles["lambda_execution"].add_to_policy(agentcore_tag_policy)
+
     def add_cloudwatch_metrics_permissions(self) -> None:
         """Add CloudWatch custom metrics permissions"""
         cloudwatch_policy = iam.PolicyStatement(
