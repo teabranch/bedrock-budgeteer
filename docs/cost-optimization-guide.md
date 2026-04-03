@@ -1,3 +1,8 @@
+---
+title: Cost Optimization
+nav_order: 9
+---
+
 # Cost Optimization Guide for Bedrock Budgeteer
 
 ## Overview

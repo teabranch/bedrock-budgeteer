@@ -1,3 +1,8 @@
+---
+title: KMS Setup
+nav_order: 11
+---
+
 # KMS Key Setup Guide for Bedrock Budgeteer
 
 ## Overview

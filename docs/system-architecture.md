@@ -1,3 +1,8 @@
+---
+title: System Architecture
+nav_order: 1
+---
+
 # Bedrock Budgeteer System Architecture
 
 ## Overview

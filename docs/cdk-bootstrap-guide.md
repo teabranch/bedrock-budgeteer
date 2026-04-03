@@ -1,3 +1,8 @@
+---
+title: CDK Bootstrap
+nav_order: 6
+---
+
 # CDK Bootstrap Guide for Bedrock Budgeteer
 
 ## Overview

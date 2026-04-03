@@ -1,3 +1,8 @@
+---
+title: Naming Conventions
+nav_order: 13
+---
+
 # Naming Conventions for Bedrock Budgeteer
 
 ## Overview

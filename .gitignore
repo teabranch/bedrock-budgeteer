@@ -9,3 +9,6 @@ tracking/*
 .env.production.local
 phases/*
 venv/*
+_site/
+.jekyll-cache/
+Gemfile.lock
