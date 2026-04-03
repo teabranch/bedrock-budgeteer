@@ -31,7 +31,8 @@
       "enable-encryption": true,
       "enable-point-in-time-recovery": true,
       "enable-multi-az": false,
-      "skip-s3-public-access-block": true
+      "skip-s3-public-access-block": true,
+      "enable_agentcore_budgeting": true
     },
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,

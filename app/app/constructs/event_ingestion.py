@@ -130,9 +130,71 @@ class EventIngestionConstruct(Construct):
             # Note: EventBridge integration enabled through event rules
         )
         
-        # Bedrock API calls are management events, so they're included by default
-        # No additional event selectors needed for Bedrock monitoring
-        
+        # Some Bedrock operations (InvokeAgent, InvokeFlow, Retrieve, etc.) are
+        # DATA events, not management events. They require advanced event selectors
+        # on the CloudTrail trail to be captured. The CDK L2 Trail construct does not
+        # support advanced event selectors directly, so we apply them via a
+        # CloudFormation property override on the underlying CfnTrail resource.
+        cfn_trail = self.cloudtrail_trails["main"].node.default_child
+        cfn_trail.add_property_override("AdvancedEventSelectors", [
+            {
+                "Name": "BedrockManagementEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Management"]}
+                ]
+            },
+            {
+                "Name": "BedrockModelDataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": ["AWS::Bedrock::Model"]}
+                ]
+            },
+            {
+                "Name": "BedrockAgentDataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": [
+                        "AWS::Bedrock::Agent",
+                        "AWS::Bedrock::InlineAgent"
+                    ]}
+                ]
+            },
+            {
+                "Name": "BedrockFlowDataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": ["AWS::Bedrock::Flow"]}
+                ]
+            },
+            {
+                "Name": "BedrockKnowledgeBaseDataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": ["AWS::Bedrock::KnowledgeBase"]}
+                ]
+            },
+            {
+                "Name": "BedrockGuardrailDataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": ["AWS::Bedrock::Guardrail"]}
+                ]
+            },
+            {
+                "Name": "S3DataEvents",
+                "FieldSelectors": [
+                    {"Field": "eventCategory", "EqualTo": ["Data"]},
+                    {"Field": "resources.type", "EqualTo": ["AWS::S3::Object"]}
+                ]
+            }
+        ])
+        # When using AdvancedEventSelectors, the legacy EventSelectors property must
+        # not be present. Remove the S3 event selector that was added below via the
+        # L2 construct so the two properties don't conflict.  The S3 data-event
+        # capture is already covered by the "S3DataEvents" advanced selector above.
+        cfn_trail.add_property_override("EventSelectors", None)
+
         # Add S3 data events for tracking S3-based operations in production
         self.cloudtrail_trails["main"].add_s3_event_selector(
             s3_selector=[
@@ -161,8 +223,38 @@ class EventIngestionConstruct(Construct):
                     "eventName": [
                         "InvokeModel",
                         "InvokeModelWithResponseStream",
+                        "InvokeModelWithBidirectionalStream",
+                        "Converse",
+                        "ConverseStream",
+                        "StartAsyncInvoke",
                         "GetFoundationModel",
                         "ListFoundationModels"
+                    ]
+                }
+            )
+        )
+        
+        # Rule for Bedrock Agents, Flows, and Knowledge Bases events
+        self.eventbridge_rules["bedrock_agents"] = events.Rule(
+            self, "BedrockAgentsRule",
+            rule_name=f"bedrock-budgeteer-{self.environment_name}-bedrock-agents",
+            description="Capture Bedrock Agents, Flows, and Knowledge Bases usage events",
+            event_pattern=events.EventPattern(
+                source=["aws.bedrock-agent-runtime", "aws.bedrock-agent", "aws.bedrock"],
+                detail_type=["AWS API Call via CloudTrail"],
+                detail={
+                    "eventSource": [
+                        "bedrock-agent-runtime.amazonaws.com",
+                        "bedrock-agent.amazonaws.com",
+                        "bedrock.amazonaws.com"
+                    ],
+                    "eventName": [
+                        "InvokeAgent",
+                        "InvokeInlineAgent",
+                        "InvokeFlow",
+                        "Retrieve",
+                        "RetrieveAndGenerate",
+                        "RetrieveAndGenerateStream"
                     ]
                 }
             )

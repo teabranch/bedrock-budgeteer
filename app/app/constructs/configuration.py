@@ -25,7 +25,12 @@ class ConfigurationConstruct(Construct):
         self._create_cost_config()  # Only budget_refresh_period_days is used
         self._create_global_config()  # Thresholds, budgets, and control flags
         self._create_monitoring_config()  # Log retention and monitoring settings
-        
+
+        # Add AgentCore config if feature is enabled
+        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags")
+        if feature_flags and feature_flags.get("enable_agentcore_budgeting"):
+            self._create_agentcore_config()
+
         # Tags are applied by TaggingFramework aspects
     
     def _get_parameter_name(self, category: str, key: str) -> str:
@@ -184,7 +189,40 @@ class ConfigurationConstruct(Construct):
         return global_config
     
     # Removed _get_max_budget_value - no longer needed
-    
+
+    def _create_agentcore_config(self) -> None:
+        """Create AgentCore budget configuration parameters"""
+        agentcore_config = {
+            "global_budget_limit_usd": {
+                "value": "500",
+                "description": "Global budget pool for all AgentCore runtimes (USD)"
+            },
+            "grace_period_seconds": {
+                "value": "3600",
+                "description": "Grace period before AgentCore runtime suspension (seconds)"
+            },
+            "warning_threshold_percent": {
+                "value": "75",
+                "description": "Warning threshold for AgentCore budget utilization"
+            },
+            "critical_threshold_percent": {
+                "value": "90",
+                "description": "Critical threshold for AgentCore budget utilization"
+            },
+            "default_per_agent_budget_usd": {
+                "value": "none",
+                "description": "Default per-agent budget in USD (none = draws from pool)"
+            }
+        }
+
+        for key, config in agentcore_config.items():
+            self.parameters[f"agentcore_{key}"] = self._create_global_parameter(
+                category="agentcore",
+                key=key,
+                value=config["value"],
+                description=config["description"]
+            )
+
     def get_parameter_reference(self, category: str, key: str) -> str:
         """Get SSM parameter reference for use in other constructs"""
         return self._get_parameter_name(category, key)

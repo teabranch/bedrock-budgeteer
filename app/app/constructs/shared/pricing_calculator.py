@@ -145,23 +145,49 @@ class BedrockPricingCalculator:
             input_rate = None
             output_rate = None
             
+            # Build a set of substrings derived from model_id that we can use to
+            # match against product attributes.  For example, given
+            # "anthropic.claude-3-sonnet-20240229-v1:0" we check for the full ID,
+            # the part after the provider prefix ("claude-3-sonnet-20240229-v1:0"),
+            # and a simplified form without version suffix ("claude-3-sonnet").
+            model_id_lower = model_id.lower()
+            model_match_tokens = {model_id_lower}
+            if '.' in model_id:
+                after_provider = model_id.split('.', 1)[1].lower()
+                model_match_tokens.add(after_provider)
+                # Strip version suffix (e.g. "-20240229-v1:0")
+                base = after_provider.split('-2024')[0].split('-2025')[0].split('-v')[0]
+                if base:
+                    model_match_tokens.add(base)
+
+            def _item_matches_model(attributes, description_text):
+                """Return True if a pricing item's attributes reference the target model."""
+                searchable = ' '.join([
+                    attributes.get('usageType', ''),
+                    attributes.get('operation', ''),
+                    attributes.get('group', ''),
+                    attributes.get('groupDescription', ''),
+                    description_text,
+                ]).lower()
+                return any(tok in searchable for tok in model_match_tokens)
+
             for price_item_str in price_list:
                 price_item = json.loads(price_item_str)
-                
+
                 # Extract product attributes
                 product = price_item.get('product', {})
                 attributes = product.get('attributes', {})
-                
+
                 # Check if this is the correct model and get usage type
                 usage_type = attributes.get('usageType', '')
                 operation = attributes.get('operation', '')
-                
+
                 logger.info(f"Processing price item: usageType={usage_type}, operation={operation}")
-                
+
                 # Parse terms to get actual pricing
                 terms = price_item.get('terms', {})
                 on_demand = terms.get('OnDemand', {})
-                
+
                 if on_demand:
                     for term_key, term_data in on_demand.items():
                         price_dimensions = term_data.get('priceDimensions', {})
@@ -169,9 +195,13 @@ class BedrockPricingCalculator:
                             price_per_unit = float(dim_data.get('pricePerUnit', {}).get('USD', 0))
                             unit = dim_data.get('unit', '')
                             description = dim_data.get('description', '')
-                            
+
                             logger.info(f"Price dimension: {description}, unit={unit}, price=${price_per_unit}")
-                            
+
+                            # Filter: only accept prices that reference the target model
+                            if not _item_matches_model(attributes, description):
+                                continue
+
                             # Identify input vs output tokens based on description/operation
                             if 'input' in description.lower() or 'Input' in operation:
                                 input_rate = price_per_unit
@@ -193,86 +223,223 @@ class BedrockPricingCalculator:
     
     @classmethod
     def _get_fallback_pricing(cls, model_id: str) -> Dict[str, float]:
-        """Get model-specific fallback pricing when API fails"""
-        # Updated fallback pricing based on current AWS Bedrock rates (as of 2024-2025)
+        """Get model-specific fallback pricing when API fails.
+        
+        Covers: Claude 3/3.5/4, Amazon Nova/Titan, Meta Llama, Mistral, Cohere, AI21,
+        Stability image models. Pricing as of early 2026.
+        """
         model_pricing = {
             # Claude 3 Family
             'anthropic.claude-3-opus-20240229-v1:0': {
-                'input_tokens_per_1000': 0.015,    # $15/1M tokens
-                'output_tokens_per_1000': 0.075    # $75/1M tokens  
+                'input_tokens_per_1000': 0.015, 'output_tokens_per_1000': 0.075
             },
             'anthropic.claude-3-sonnet-20240229-v1:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
             'anthropic.claude-3-haiku-20240307-v1:0': {
-                'input_tokens_per_1000': 0.00025,  # $0.25/1M tokens
-                'output_tokens_per_1000': 0.00125  # $1.25/1M tokens
+                'input_tokens_per_1000': 0.00025, 'output_tokens_per_1000': 0.00125
             },
-            
-            # Claude 3.5 Family  
+            # Claude 3.5 Family
             'anthropic.claude-3-5-sonnet-20240620-v1:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.006, 'output_tokens_per_1000': 0.030  # S8: v1 EOL March 2026, extended access doubled pricing
             },
             'anthropic.claude-3-5-sonnet-20241022-v2:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
             'anthropic.claude-3-5-haiku-20241022-v1:0': {
-                'input_tokens_per_1000': 0.001,    # $1/1M tokens
-                'output_tokens_per_1000': 0.005    # $5/1M tokens
+                'input_tokens_per_1000': 0.001, 'output_tokens_per_1000': 0.005
             },
-            
-            # Claude 4 Family (Updated with official pricing as of 02.09.2025)
+            # Claude 4 Family
             'anthropic.claude-opus-4-20250115-v1:0': {
-                'input_tokens_per_1000': 0.015,    # $15/1M tokens
-                'output_tokens_per_1000': 0.075    # $75/1M tokens
+                'input_tokens_per_1000': 0.015, 'output_tokens_per_1000': 0.075
             },
             'anthropic.claude-opus-4-1-20250115-v1:0': {
-                'input_tokens_per_1000': 0.015,    # $15/1M tokens
-                'output_tokens_per_1000': 0.075    # $75/1M tokens
+                'input_tokens_per_1000': 0.015, 'output_tokens_per_1000': 0.075
             },
             'anthropic.claude-sonnet-4-20250115-v1:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
             'anthropic.claude-sonnet-4-long-context-20250115-v1:0': {
-                'input_tokens_per_1000': 0.006,    # $6/1M tokens
-                'output_tokens_per_1000': 0.0225   # $22.5/1M tokens
+                'input_tokens_per_1000': 0.006, 'output_tokens_per_1000': 0.0225
             },
-            # Legacy format for Claude 4 (Sonnet) - keeping for backwards compatibility
             'claude-sonnet-4-20250514': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
-            
-            # Additional model patterns with regional variations
+            # Claude 4.5/4.6 Family (S1-S3)
+            'anthropic.claude-opus-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'anthropic.claude-opus-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'anthropic.claude-sonnet-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'anthropic.claude-sonnet-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            # Claude Haiku 4.5 (S4)
+            'anthropic.claude-haiku-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.001, 'output_tokens_per_1000': 0.005
+            },
+            # Cross-region prefixed Claude models
             'us.anthropic.claude-3-5-sonnet-20241022-v2:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
             'us.anthropic.claude-sonnet-4-20250115-v1:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
             'us.anthropic.claude-opus-4-20250115-v1:0': {
-                'input_tokens_per_1000': 0.015,    # $15/1M tokens
-                'output_tokens_per_1000': 0.075    # $75/1M tokens
+                'input_tokens_per_1000': 0.015, 'output_tokens_per_1000': 0.075
             },
             'us.anthropic.claude-opus-4-1-20250115-v1:0': {
-                'input_tokens_per_1000': 0.015,    # $15/1M tokens
-                'output_tokens_per_1000': 0.075    # $75/1M tokens
+                'input_tokens_per_1000': 0.015, 'output_tokens_per_1000': 0.075
             },
             'us.anthropic.claude-sonnet-4-long-context-20250115-v1:0': {
-                'input_tokens_per_1000': 0.006,    # $6/1M tokens
-                'output_tokens_per_1000': 0.0225   # $22.5/1M tokens
+                'input_tokens_per_1000': 0.006, 'output_tokens_per_1000': 0.0225
             },
-            # Legacy format for Claude 4 (Sonnet) - keeping for backwards compatibility 
             'us.anthropic.claude-sonnet-4-20250514-v1:0': {
-                'input_tokens_per_1000': 0.003,    # $3/1M tokens
-                'output_tokens_per_1000': 0.015    # $15/1M tokens
-            }
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-opus-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'us.anthropic.claude-opus-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'us.anthropic.claude-sonnet-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-sonnet-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-haiku-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.001, 'output_tokens_per_1000': 0.005
+            },
+            # Amazon Nova Family
+            'amazon.nova-micro-v1:0': {
+                'input_tokens_per_1000': 0.000035, 'output_tokens_per_1000': 0.00014
+            },
+            'amazon.nova-lite-v1:0': {
+                'input_tokens_per_1000': 0.00006, 'output_tokens_per_1000': 0.00024
+            },
+            'amazon.nova-pro-v1:0': {
+                'input_tokens_per_1000': 0.0008, 'output_tokens_per_1000': 0.0032
+            },
+            'amazon.nova-premier-v1:0': {
+                'input_tokens_per_1000': 0.0025, 'output_tokens_per_1000': 0.0125
+            },
+            'us.amazon.nova-pro-v1:0': {
+                'input_tokens_per_1000': 0.0008, 'output_tokens_per_1000': 0.0032
+            },
+            'us.amazon.nova-lite-v1:0': {
+                'input_tokens_per_1000': 0.00006, 'output_tokens_per_1000': 0.00024
+            },
+            'us.amazon.nova-micro-v1:0': {
+                'input_tokens_per_1000': 0.000035, 'output_tokens_per_1000': 0.00014
+            },
+            # Amazon Titan Text
+            'amazon.titan-text-express-v1': {
+                'input_tokens_per_1000': 0.0002, 'output_tokens_per_1000': 0.0006
+            },
+            'amazon.titan-text-lite-v1': {
+                'input_tokens_per_1000': 0.00015, 'output_tokens_per_1000': 0.0002
+            },
+            'amazon.titan-text-premier-v1:0': {
+                'input_tokens_per_1000': 0.0005, 'output_tokens_per_1000': 0.0015
+            },
+            # Amazon Titan Embeddings
+            'amazon.titan-embed-text-v1': {
+                'input_tokens_per_1000': 0.0001, 'output_tokens_per_1000': 0.0
+            },
+            'amazon.titan-embed-text-v2:0': {
+                'input_tokens_per_1000': 0.00002, 'output_tokens_per_1000': 0.0
+            },
+            # Meta Llama Family
+            'meta.llama3-8b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.0003, 'output_tokens_per_1000': 0.0006
+            },
+            'meta.llama3-70b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00265, 'output_tokens_per_1000': 0.0035
+            },
+            'meta.llama3-1-8b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00022, 'output_tokens_per_1000': 0.00022
+            },
+            'meta.llama3-1-70b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00072, 'output_tokens_per_1000': 0.00072
+            },
+            'meta.llama3-1-405b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00532, 'output_tokens_per_1000': 0.016
+            },
+            'us.meta.llama3-2-90b-instruct-v1:0': {
+                'input_tokens_per_1000': 0.002, 'output_tokens_per_1000': 0.002
+            },
+            # Meta Llama 4 Family (S5)
+            'meta.llama4-scout-17b-16e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00017, 'output_tokens_per_1000': 0.00069
+            },
+            'meta.llama4-maverick-17b-128e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00024, 'output_tokens_per_1000': 0.00097
+            },
+            'us.meta.llama4-scout-17b-16e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00017, 'output_tokens_per_1000': 0.00069
+            },
+            'us.meta.llama4-maverick-17b-128e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00024, 'output_tokens_per_1000': 0.00097
+            },
+            # Mistral Family
+            'mistral.mistral-7b-instruct-v0:2': {
+                'input_tokens_per_1000': 0.00015, 'output_tokens_per_1000': 0.0002
+            },
+            'mistral.mixtral-8x7b-instruct-v0:1': {
+                'input_tokens_per_1000': 0.00045, 'output_tokens_per_1000': 0.0007
+            },
+            'mistral.mistral-large-2402-v1:0': {
+                'input_tokens_per_1000': 0.004, 'output_tokens_per_1000': 0.012
+            },
+            'mistral.mistral-large-2407-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.009
+            },
+            # Cohere Family
+            'cohere.command-r-v1:0': {
+                'input_tokens_per_1000': 0.0005, 'output_tokens_per_1000': 0.0015
+            },
+            'cohere.command-r-plus-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'cohere.embed-english-v3': {
+                'input_tokens_per_1000': 0.0001, 'output_tokens_per_1000': 0.0
+            },
+            # AI21 Family
+            'ai21.jamba-1-5-mini-v1:0': {
+                'input_tokens_per_1000': 0.0002, 'output_tokens_per_1000': 0.0004
+            },
+            'ai21.jamba-1-5-large-v1:0': {
+                'input_tokens_per_1000': 0.002, 'output_tokens_per_1000': 0.008
+            },
+            # Image generation models (per-image pricing stored as per-1K-token for compatibility)
+            # Actual image cost calculation is handled by _calculate_image_cost()
+            'stability.stable-diffusion-xl-v1': {
+                'input_tokens_per_1000': 0.036, 'output_tokens_per_1000': 0.0
+            },
+            'stability.sd3-large-v1:0': {
+                'input_tokens_per_1000': 0.035, 'output_tokens_per_1000': 0.0
+            },
+            'stability.stable-image-ultra-v1:0': {
+                'input_tokens_per_1000': 0.06, 'output_tokens_per_1000': 0.0
+            },
+            'stability.stable-image-core-v1:0': {
+                'input_tokens_per_1000': 0.04, 'output_tokens_per_1000': 0.0
+            },
+            'amazon.titan-image-generator-v1': {
+                'input_tokens_per_1000': 0.012, 'output_tokens_per_1000': 0.0
+            },
+            'amazon.titan-image-generator-v2:0': {
+                'input_tokens_per_1000': 0.012, 'output_tokens_per_1000': 0.0
+            },
+            'amazon.nova-canvas-v1:0': {
+                'input_tokens_per_1000': 0.04, 'output_tokens_per_1000': 0.0
+            },
         }
         
         # Extract model name from full ARN if needed
@@ -315,9 +482,10 @@ class BedrockPricingCalculator:
         input_cost = (input_tokens / 1000) * pricing['input_tokens_per_1000']
         output_cost = (output_tokens / 1000) * pricing['output_tokens_per_1000']
         
-        # Cache operations: cache creation is charged at input rate, cache read at discounted rate
-        cache_creation_cost = (cache_creation_tokens / 1000) * pricing['input_tokens_per_1000']
-        # Cache read tokens are typically charged at 10% of input rate
+        # Cache operations: cache creation is charged at 1.25x input rate (5-min TTL),
+        # cache read at 10% of input rate. See S7 in gap analysis.
+        cache_creation_cost = (cache_creation_tokens / 1000) * (pricing['input_tokens_per_1000'] * 1.25)
+        # Cache read tokens are charged at 10% of input rate
         cache_read_cost = (cache_read_tokens / 1000) * (pricing['input_tokens_per_1000'] * 0.1)
         
         total_cost = input_cost + output_cost + cache_creation_cost + cache_read_cost

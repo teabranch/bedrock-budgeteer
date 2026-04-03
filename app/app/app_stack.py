@@ -21,6 +21,7 @@ from .constructs.event_ingestion import EventIngestionConstruct
 from .constructs.log_storage import LogStorageConstruct
 from .constructs.core_processing import CoreProcessingConstruct
 from .constructs.workflow_orchestration import WorkflowOrchestrationConstruct
+from .constructs.agentcore import AgentCoreConstruct
 # Operational controls removed per changelog - see 2025-09-02 updates
 
 
@@ -109,6 +110,30 @@ class BedrockBudgeteerStack(Stack):
             kms_key=self.kms_key
         )
         
+        # Deploy AgentCore budgeting (feature-flagged)
+        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags") or {}
+        if feature_flags.get("enable_agentcore_budgeting"):
+            self.agentcore = AgentCoreConstruct(
+                self, "AgentCore",
+                environment_name=environment_name,
+                lambda_execution_role=self.security.roles["lambda_execution"],
+                step_functions_role=self.security.roles["step_functions"],
+                usage_tracking_table=self.data_storage.tables["usage_tracking"],
+                sns_topics=self.monitoring.topics,
+                kms_key=self.kms_key,
+            )
+
+            # Add AgentCore table to usage_calculator environment
+            self.core_processing.functions["usage_calculator"].add_environment(
+                "AGENTCORE_BUDGETS_TABLE",
+                self.agentcore.agentcore_budgets_table.table_name
+            )
+
+            # Grant usage_calculator read/write access to AgentCore table
+            self.agentcore.agentcore_budgets_table.grant_read_write_data(
+                self.security.roles["lambda_execution"]
+            )
+
         # Add additional permissions to security roles
         self._configure_security_permissions()
         
@@ -163,6 +188,11 @@ class BedrockBudgeteerStack(Stack):
         
         # Add SQS permissions for DLQ access
         self.security.add_sqs_permissions(self.core_processing.dead_letter_queues)
+
+        # Add AgentCore IAM permissions if feature is enabled
+        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags") or {}
+        if feature_flags.get("enable_agentcore_budgeting"):
+            self.security.add_agentcore_iam_permissions()
     
     def _setup_monitoring(self) -> None:
         """Set up monitoring for all created resources"""
