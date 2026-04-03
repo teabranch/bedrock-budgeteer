@@ -328,7 +328,24 @@ def process_bedrock_log(log_data):
         # Calculate cost
         region = actual_log_data.get('awsRegion', 'us-east-1')
         cost = BedrockPricingCalculator.calculate_cost(model_id, input_tokens, output_tokens, region)
-        
+
+        # --- AgentCore routing check ---
+        # If the caller is an AssumedRole matching a registered AgentCore runtime,
+        # attribute costs to that runtime's budget instead of API key budget.
+        agentcore_table_name = os.environ.get('AGENTCORE_BUDGETS_TABLE', '')
+        if agentcore_table_name and actual_log_data:
+            caller_role_arn = extract_role_arn_from_event(actual_log_data)
+            if caller_role_arn:
+                runtime = lookup_runtime_by_role_arn(caller_role_arn)
+                if runtime:
+                    # Calculate cost using existing pricing logic (already done above)
+                    if cost and cost > 0:
+                        update_runtime_budget(runtime['runtime_id'], cost)
+                        update_global_pool(cost)
+                        record_usage_tracking(runtime['runtime_id'], model_id, cost, input_tokens, output_tokens, 'agentcore')
+                        logger.info(f"Attributed ${cost} to AgentCore runtime {runtime['runtime_id']}")
+                        return True  # Cost attributed to AgentCore runtime; skip standard budget update
+
         # Record usage tracking
         logger.info(f"Recording usage tracking for {principal_id} (CloudTrail)")
         record_usage_tracking(principal_id, model_id, cost, input_tokens, output_tokens, 'cloudtrail_api')

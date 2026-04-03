@@ -57,5 +57,29 @@ class TestExtractRoleArnLogic(unittest.TestCase):
         self.assertNotIn('sessionContext', event_detail.get('userIdentity', {}))
 
 
+class TestUsageCalculatorAgentCoreRouting(unittest.TestCase):
+    """Validate usage_calculator contains AgentCore routing code"""
+
+    def setUp(self):
+        from app.constructs.lambda_functions.usage_calculator import get_usage_calculator_function_code
+        self.code = get_usage_calculator_function_code()
+
+    def test_contains_agentcore_routing_check(self):
+        self.assertIn('extract_role_arn_from_event', self.code)
+
+    def test_contains_agentcore_lookup(self):
+        self.assertIn('lookup_runtime_by_role_arn', self.code)
+
+    def test_contains_agentcore_budget_update(self):
+        self.assertIn('update_runtime_budget', self.code)
+
+    def test_contains_global_pool_update(self):
+        self.assertIn('update_global_pool', self.code)
+
+    def test_contains_agentcore_source_marker(self):
+        """Usage tracking entries should be marked with agentcore source"""
+        self.assertIn("'agentcore'", self.code)
+
+
 if __name__ == '__main__':
     unittest.main()
