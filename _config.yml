@@ -1,8 +1,8 @@
 title: Bedrock Budgeteer
 description: >-
   Serverless AWS CDK application that monitors and controls AWS Bedrock API usage costs in real-time.
-baseurl: "/bedrock-budgeteer"
-url: "https://teabranch.github.io"
+baseurl: ""
+url: "https://bedrock-budgeteer.teabranch.dev"
 
 theme: just-the-docs
 color_scheme: anthropic
