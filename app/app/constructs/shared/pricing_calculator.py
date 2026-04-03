@@ -241,7 +241,7 @@ class BedrockPricingCalculator:
             },
             # Claude 3.5 Family
             'anthropic.claude-3-5-sonnet-20240620-v1:0': {
-                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+                'input_tokens_per_1000': 0.006, 'output_tokens_per_1000': 0.030  # S8: v1 EOL March 2026, extended access doubled pricing
             },
             'anthropic.claude-3-5-sonnet-20241022-v2:0': {
                 'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
@@ -265,6 +265,23 @@ class BedrockPricingCalculator:
             'claude-sonnet-4-20250514': {
                 'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
             },
+            # Claude 4.5/4.6 Family (S1-S3)
+            'anthropic.claude-opus-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'anthropic.claude-opus-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'anthropic.claude-sonnet-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'anthropic.claude-sonnet-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            # Claude Haiku 4.5 (S4)
+            'anthropic.claude-haiku-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.001, 'output_tokens_per_1000': 0.005
+            },
             # Cross-region prefixed Claude models
             'us.anthropic.claude-3-5-sonnet-20241022-v2:0': {
                 'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
@@ -283,6 +300,21 @@ class BedrockPricingCalculator:
             },
             'us.anthropic.claude-sonnet-4-20250514-v1:0': {
                 'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-opus-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'us.anthropic.claude-opus-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.005, 'output_tokens_per_1000': 0.025
+            },
+            'us.anthropic.claude-sonnet-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-sonnet-4-6-20260301-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.015
+            },
+            'us.anthropic.claude-haiku-4-5-20260201-v1:0': {
+                'input_tokens_per_1000': 0.001, 'output_tokens_per_1000': 0.005
             },
             # Amazon Nova Family
             'amazon.nova-micro-v1:0': {
@@ -342,6 +374,19 @@ class BedrockPricingCalculator:
             'us.meta.llama3-2-90b-instruct-v1:0': {
                 'input_tokens_per_1000': 0.002, 'output_tokens_per_1000': 0.002
             },
+            # Meta Llama 4 Family (S5)
+            'meta.llama4-scout-17b-16e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00017, 'output_tokens_per_1000': 0.00069
+            },
+            'meta.llama4-maverick-17b-128e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00024, 'output_tokens_per_1000': 0.00097
+            },
+            'us.meta.llama4-scout-17b-16e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00017, 'output_tokens_per_1000': 0.00069
+            },
+            'us.meta.llama4-maverick-17b-128e-instruct-v1:0': {
+                'input_tokens_per_1000': 0.00024, 'output_tokens_per_1000': 0.00097
+            },
             # Mistral Family
             'mistral.mistral-7b-instruct-v0:2': {
                 'input_tokens_per_1000': 0.00015, 'output_tokens_per_1000': 0.0002
@@ -351,6 +396,9 @@ class BedrockPricingCalculator:
             },
             'mistral.mistral-large-2402-v1:0': {
                 'input_tokens_per_1000': 0.004, 'output_tokens_per_1000': 0.012
+            },
+            'mistral.mistral-large-2407-v1:0': {
+                'input_tokens_per_1000': 0.003, 'output_tokens_per_1000': 0.009
             },
             # Cohere Family
             'cohere.command-r-v1:0': {
@@ -434,9 +482,10 @@ class BedrockPricingCalculator:
         input_cost = (input_tokens / 1000) * pricing['input_tokens_per_1000']
         output_cost = (output_tokens / 1000) * pricing['output_tokens_per_1000']
         
-        # Cache operations: cache creation is charged at input rate, cache read at discounted rate
-        cache_creation_cost = (cache_creation_tokens / 1000) * pricing['input_tokens_per_1000']
-        # Cache read tokens are typically charged at 10% of input rate
+        # Cache operations: cache creation is charged at 1.25x input rate (5-min TTL),
+        # cache read at 10% of input rate. See S7 in gap analysis.
+        cache_creation_cost = (cache_creation_tokens / 1000) * (pricing['input_tokens_per_1000'] * 1.25)
+        # Cache read tokens are charged at 10% of input rate
         cache_read_cost = (cache_read_tokens / 1000) * (pricing['input_tokens_per_1000'] * 0.1)
         
         total_cost = input_cost + output_cost + cache_creation_cost + cache_read_cost
