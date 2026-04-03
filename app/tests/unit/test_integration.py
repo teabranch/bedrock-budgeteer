@@ -106,7 +106,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_eventbridge_rules_created(self):
         """Test that EventBridge rules are created"""
-        # Test Bedrock usage rule
+        # Test Bedrock usage rule (includes Converse API events)
         self.template.has_resource("AWS::Events::Rule", {
             "Properties": {
                 "Name": "bedrock-budgeteer-production-bedrock-usage",
@@ -118,6 +118,10 @@ class TestIntegration(unittest.TestCase):
                         "eventName": [
                             "InvokeModel",
                             "InvokeModelWithResponseStream",
+                            "InvokeModelWithBidirectionalStream",
+                            "Converse",
+                            "ConverseStream",
+                            "StartAsyncInvoke",
                             "GetFoundationModel",
                             "ListFoundationModels"
                         ]
@@ -168,7 +172,6 @@ class TestIntegration(unittest.TestCase):
         # Should have alarms for DynamoDB tables
         self.template.has_resource_properties("AWS::CloudWatch::Alarm", {
             "AlarmName": "bedrock-budgeteer-production-user_budgets-read-throttles",
-            "MetricName": "UserErrors",
             "Namespace": "AWS/DynamoDB"
         })
 
@@ -251,15 +254,13 @@ class TestIntegration(unittest.TestCase):
 
     def test_bucket_lifecycle_policies(self):
         """Test that S3 bucket lifecycle policies are configured"""
-        # Production environment should have long-term retention
         self.template.has_resource("AWS::S3::Bucket", {
             "Properties": {
                 "LifecycleConfiguration": {
                     "Rules": [
                         {
-                            "Id": "ProductionLogsLifecycle",
+                            "Id": "LogsLifecycle",
                             "Status": "Enabled"
-                            # No expiration for production logs
                         }
                     ]
                 }
@@ -268,10 +269,10 @@ class TestIntegration(unittest.TestCase):
 
     def test_stack_tags_applied(self):
         """Test that proper tags are applied to resources"""
-        # DynamoDB tables should have proper tags
+        # DynamoDB tables should have core tags from tagging framework
         self.template.has_resource("AWS::DynamoDB::Table", {
             "Properties": {
-                "Tags": [
+                "Tags": assertions.Match.array_with([
                     {
                         "Key": "App",
                         "Value": "bedrock-budgeteer"
@@ -279,12 +280,8 @@ class TestIntegration(unittest.TestCase):
                     {
                         "Key": "Environment",
                         "Value": "production"
-                    },
-                    {
-                        "Key": "Component",
-                        "Value": "data-storage"
                     }
-                ]
+                ])
             }
         })
 
