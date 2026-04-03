@@ -9,7 +9,7 @@ permalink: /
 A comprehensive serverless budget monitoring and control system for AWS Bedrock API usage.
 
 <p><em>Find this useful? Star the repo to follow updates and show support!</em>
-<iframe src="https://ghbtns.com/github-btn.html?user=teabranch&repo=bedrock-budgeteer&type=star&count=true&size=large" frameborder="0" scrolling="0" width="170" height="30" title="Star on GitHub" style="vertical-align: middle;"></iframe></p>
+<a href="https://github.com/teabranch/bedrock-budgeteer" title="Star Bedrock Budgeteer on GitHub" style="display: inline-block; vertical-align: middle; padding: 6px 12px; border: 1px solid #d0d7de; border-radius: 6px; text-decoration: none;">⭐ Star on GitHub</a></p>
 
 > **Deploy with CDK** — `cdk deploy` from the `app/` directory.
 > See [Deployment Guide](docs/deployment-guide.md) for all options.
