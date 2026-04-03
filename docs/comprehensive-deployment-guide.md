@@ -157,6 +157,32 @@ export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 ```
 
+**Configure Feature Flags (Optional):**
+
+Feature flags are set in `app/cdk.json` under the `bedrock-budgeteer:feature-flags` context key.
+
+To enable AgentCore budgeting, add or update the feature flags section:
+```json
+{
+  "context": {
+    "bedrock-budgeteer:feature-flags": {
+      "enable_agentcore_budgeting": true
+    }
+  }
+}
+```
+
+To disable AgentCore budgeting, set the flag to `false` (or remove it) and redeploy. When disabled, no AgentCore resources are created and there is no additional cost.
+
+When enabled, the following resources are created:
+- 1 DynamoDB table (provisioned 5/5 RCU/WCU with GSI)
+- 4 Lambda functions (256MB, 5-minute timeout)
+- 4 SQS dead-letter queues
+- 2 Step Functions state machines
+- 2 EventBridge rules
+- 1 Function URL (IAM-authenticated) for the budget management API
+- SSM parameters under `/bedrock-budgeteer/global/agentcore/`
+
 ### Step 4: Synthesize CloudFormation Template
 
 ```bash
@@ -427,6 +453,49 @@ aws stepfunctions describe-state-machine \
   --state-machine-arn "arn:aws:states:us-east-1:ACCOUNT:stateMachine:bedrock-budgeteer-suspension-production"
 ```
 
+### Step 5: Verify AgentCore Resources (if enabled)
+
+If `enable_agentcore_budgeting` is set to `true`, verify the AgentCore resources:
+
+```bash
+# 1. Check the AgentCore DynamoDB table
+aws dynamodb describe-table \
+  --table-name bedrock-budgeteer-agentcore-budgets \
+  --query 'Table.{Status:TableStatus,BillingMode:BillingModeSummary.BillingMode}' \
+  --output table
+
+# 2. Verify AgentCore Lambda functions
+aws lambda list-functions \
+  --query 'Functions[?contains(FunctionName, `agentcore`)].FunctionName' \
+  --output table
+
+# 3. Get the Function URL for the budget management API
+aws lambda list-function-url-configs \
+  --function-name bedrock-budgeteer-agentcore-api-production \
+  --query 'FunctionUrlConfigs[0].FunctionUrl' --output text
+
+# 4. Test the Function URL (requires IAM authentication)
+FUNCTION_URL=$(aws lambda list-function-url-configs \
+  --function-name bedrock-budgeteer-agentcore-api-production \
+  --query 'FunctionUrlConfigs[0].FunctionUrl' --output text)
+echo "AgentCore API available at: $FUNCTION_URL"
+
+# 5. Verify AgentCore EventBridge rules are active
+aws events list-rules \
+  --query 'Rules[?contains(Name, `agentcore`)].{Name:Name,State:State}' --output table
+
+# 6. Verify AgentCore Step Functions
+aws stepfunctions list-state-machines \
+  --query 'stateMachines[?contains(name, `agentcore`)].{Name:name,Status:status}' --output table
+
+# 7. Check SSM parameters created for AgentCore
+aws ssm get-parameters-by-path \
+  --path "/bedrock-budgeteer/global/agentcore/" \
+  --recursive --query 'Parameters[].Name' --output table
+```
+
+**Note:** The Function URL uses IAM authentication. To call it, sign requests with AWS Signature Version 4 using credentials that have `lambda:InvokeFunctionUrl` permission.
+
 ## Troubleshooting Common Issues
 
 ### Issue 1: CDK Bootstrap Fails
@@ -545,6 +614,8 @@ aws cloudformation describe-stacks \
 - [ ] SNS topics and subscriptions set up
 - [ ] Test user creation and budget monitoring
 - [ ] Production notification channels configured
+- [ ] AgentCore resources verified (if `enable_agentcore_budgeting` is enabled)
+- [ ] AgentCore Function URL accessible with IAM auth (if enabled)
 - [ ] Documentation updated with environment-specific details
 
 ## Next Steps

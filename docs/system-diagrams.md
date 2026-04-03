@@ -75,10 +75,22 @@ graph TB
         end
     end
     
+    subgraph "AgentCore Budgeting Layer"
+        ACEB[EventBridge Rules<br/>agentcore-lifecycle<br/>agentcore-budget]
+        ACSETUP[AgentCore Setup Lambda<br/>Initialize Agent Budgets]
+        ACMON[AgentCore Budget Monitor Lambda<br/>Threshold Evaluation]
+        ACMGR[AgentCore Budget Manager Lambda<br/>Limit Management]
+        ACIAM[AgentCore IAM Utilities Lambda<br/>Role Policy Management]
+        ACTBL[(AgentCore Budgets Table<br/>Agent Budget Tracking)]
+        ACSF1[AgentCore Suspension Workflow<br/>Step Functions]
+        ACSF2[AgentCore Restoration Workflow<br/>Step Functions]
+    end
+
     subgraph "External Services"
         PRICING[AWS Pricing API<br/>Real-time Model Costs]
         IAM[AWS IAM<br/>Access Control]
         BEDROCK[AWS Bedrock<br/>Foundation Models]
+        AGENTCORE[AWS Bedrock AgentCore<br/>Agent Lifecycle]
     end
     
     %% User flow
@@ -156,7 +168,24 @@ graph TB
     BM --> CWM
     CWA --> CWD
     CWM --> CWD
-    
+
+    %% AgentCore flow
+    AGENTCORE --> CT
+    CT --> ACEB
+    ACEB --> ACSETUP
+    ACSETUP --> ACTBL
+    UC -->|Role ARN match| ACTBL
+    ACMON --> ACTBL
+    ACMON --> ACSF1
+    ACMGR --> ACTBL
+    ACSF2 --> ACIAM
+    ACSF1 --> ACIAM
+    ACIAM --> IAM
+    ACSF1 --> SNS3
+    ACSF2 --> SNS1
+    ACMON --> SNS2
+    ACMON --> SSM
+
     %% Styling
     classDef userClass fill:#e1f5fe,stroke:#01579b,stroke-width:2px
     classDef ingestionClass fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
@@ -172,7 +201,10 @@ graph TB
     class UB,UT,AD,PR,SSM storageClass
     class SF1,SF2,IU,GP,PB,RV workflowClass
     class SNS1,SNS2,SNS3,EMAIL,SLACK,PD,SMS,CWD,CWA,CWM monitoringClass
-    class PRICING,IAM,BEDROCK externalClass
+    classDef agentcoreClass fill:#e8eaf6,stroke:#283593,stroke-width:2px
+
+    class ACEB,ACSETUP,ACMON,ACMGR,ACIAM,ACTBL,ACSF1,ACSF2 agentcoreClass
+    class PRICING,IAM,BEDROCK,AGENTCORE externalClass
 ```
 
 ## Complete User Journey Sequence
@@ -424,6 +456,82 @@ graph TD
     class BM_CHECK,BM_GRACE,BM_EXPIRED,RW_CHOICE decisionClass
 ```
 
+## AgentCore Budgeting Data Flow
+
+This diagram shows the AgentCore integration: lifecycle detection, usage attribution via role ARN matching, budget monitoring, and suspension/restoration workflows.
+
+```mermaid
+sequenceDiagram
+    participant AgentCore as Bedrock AgentCore
+    participant CloudTrail
+    participant EventBridge
+    participant ACSetup as AgentCore Setup Lambda
+    participant UsageCalc as Usage Calculator Lambda
+    participant DynamoDB as AgentCore Budgets Table
+    participant ACMonitor as AgentCore Budget Monitor
+    participant StepFunctions as Step Functions
+    participant ACIAM as AgentCore IAM Utilities
+    participant IAM as AWS IAM
+    participant SNS
+
+    Note over AgentCore,SNS: AgentCore Budgeting - Lifecycle Detection to Suspension/Restoration
+
+    rect rgb(232, 234, 246)
+        Note over AgentCore,DynamoDB: 1. Agent Lifecycle Detection
+        AgentCore->>CloudTrail: CreateAgent / UpdateAgent Event
+        CloudTrail->>EventBridge: AgentCore Lifecycle Event
+        EventBridge->>ACSetup: Trigger AgentCore Setup
+        ACSetup->>DynamoDB: Initialize Agent Budget Record
+        ACSetup->>DynamoDB: Set Default Budget Limit
+        Note over ACSetup: Maps agent ID to execution role ARN
+    end
+
+    rect rgb(245, 255, 245)
+        Note over AgentCore,DynamoDB: 2. Usage Attribution via Role ARN Matching
+        AgentCore->>CloudTrail: InvokeModel (via agent execution role)
+        CloudTrail->>EventBridge: Bedrock Usage Event
+        EventBridge->>UsageCalc: Process Usage Event
+        UsageCalc->>UsageCalc: Extract role ARN from event
+        UsageCalc->>DynamoDB: Match role ARN to agent budget
+        UsageCalc->>DynamoDB: Update agent spent_usd += cost
+        Note over UsageCalc,DynamoDB: Role ARN match routes cost to agentcore-budgets table
+    end
+
+    rect rgb(255, 245, 245)
+        Note over ACMonitor,SNS: 3. Agent Budget Monitoring (Every 5 Minutes)
+        loop Every 5 minutes
+            ACMonitor->>DynamoDB: Scan Agent Budgets
+            ACMonitor->>ACMonitor: Check Thresholds
+
+            alt Budget Exceeded (100%+)
+                ACMonitor->>EventBridge: Publish Agent Suspension Event
+                EventBridge->>StepFunctions: Trigger Agent Suspension Workflow
+                StepFunctions->>SNS: Send Grace Notification
+                Note over StepFunctions: Wait Grace Period
+                StepFunctions->>ACIAM: Detach Execution Role Policies
+                ACIAM->>IAM: Remove Agent Access Policies
+                StepFunctions->>DynamoDB: Update Status to Suspended
+                StepFunctions->>SNS: Send Suspension Alert
+            else Warning (70%+) / Critical (90%+)
+                ACMonitor->>SNS: Send Budget Alert
+            end
+        end
+    end
+
+    rect rgb(248, 255, 248)
+        Note over ACMonitor,SNS: 4. Agent Budget Restoration
+        ACMonitor->>DynamoDB: Check Refresh Dates
+        alt Refresh Period Reached
+            ACMonitor->>EventBridge: Publish Agent Restoration Event
+            EventBridge->>StepFunctions: Trigger Agent Restoration Workflow
+            StepFunctions->>ACIAM: Validate & Restore Policies
+            ACIAM->>IAM: Re-attach Execution Role Policies
+            StepFunctions->>DynamoDB: Reset Budget (spent_usd = 0)
+            StepFunctions->>SNS: Send Restoration Alert
+        end
+    end
+```
+
 ## Data Storage Schema
 
 The following diagram shows the DynamoDB table structure and relationships:
@@ -480,6 +588,24 @@ erDiagram
         string data_source
         number ttl
     }
+
+    AgentCoreBudgets {
+        string agent_id PK
+        string execution_role_arn
+        number budget_limit_usd
+        number spent_usd
+        string status
+        string budget_period_start
+        string budget_refresh_date
+        number grace_deadline_epoch
+        string threshold_state
+        number refresh_period_days
+        string created_at
+        string last_updated
+    }
+
+    AgentCoreBudgets ||--o{ UsageTracking : "execution_role_arn"
+    AgentCoreBudgets ||--o{ AuditLogs : "agent_id"
 ```
 
 ## Monitoring and Alerting Flow
@@ -755,6 +881,7 @@ graph TD
 - **Orange (Storage)**: Data storage and persistence
 - **Pink (Workflow)**: Workflow orchestration and automation
 - **Teal (Monitoring)**: Monitoring, alerting, and observability
+- **Indigo (AgentCore)**: AgentCore budgeting components
 - **Light Green (External)**: External services and APIs
 
 ### Symbol Meanings

@@ -138,6 +138,42 @@ def _get_encryption_config(self) -> Dict[str, Any]:
 - **Lifecycle Management**: Automated management based on tags
 - **Budget Tracking**: Component-level cost monitoring
 
+## AgentCore Cost Considerations
+
+AgentCore budgeting is an optional feature controlled by the `enable_agentcore_budgeting` feature flag. When disabled, no AgentCore resources are created and there is zero additional cost.
+
+### Resources Created (when enabled)
+
+| Resource | Specification | Cost Driver |
+|----------|--------------|-------------|
+| DynamoDB table | Provisioned 5/5 RCU/WCU with GSI | Fixed baseline capacity |
+| Lambda functions (x4) | 256MB, 5-minute timeout | Per-invocation only |
+| SQS dead-letter queues (x4) | Standard queues | Negligible (error cases only) |
+| Step Functions (x2) | Standard workflows | Per-state-transition |
+| EventBridge rules (x2) | Lifecycle events + 5-min schedule | Included in free tier |
+
+### DynamoDB Provisioned Capacity
+
+The AgentCore DynamoDB table uses provisioned capacity (5 RCU / 5 WCU) with a GSI at the same capacity:
+- **Estimated cost**: approximately $5-6/month for the table and GSI combined
+- The provisioned capacity is intentionally low since AgentCore budget operations are infrequent
+- If usage grows, consider enabling auto-scaling on this table
+
+### Lambda Invocation Costs
+
+AgentCore Lambda functions are invoked only on:
+- **Lifecycle events** (agent creation, deletion, budget changes) -- these are rare and event-driven
+- **Budget monitor schedule** (every 5 minutes = 288 invocations/day)
+- **API calls** via the Function URL (on-demand, driven by admin usage)
+
+At 256MB and typical sub-second execution times, the Lambda cost is minimal -- well within free tier for most deployments.
+
+### Cost Impact Summary
+
+- **Feature disabled**: $0 additional cost
+- **Feature enabled, typical usage**: approximately $6-8/month (dominated by DynamoDB provisioned capacity)
+- **Optimization tip**: Monitor the AgentCore DynamoDB table's consumed capacity via CloudWatch. If utilization is consistently low, the provisioned capacity is already right-sized at the minimum.
+
 ## S3 Cost Optimization
 
 ### Lifecycle Management

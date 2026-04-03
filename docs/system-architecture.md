@@ -26,6 +26,7 @@ graph TB
         BR[Bedrock API Calls]
         IAM[IAM Changes]
         CT[CloudTrail Events]
+        AC[AgentCore Lifecycle Events]
     end
     
     subgraph "Ingestion Layer"
@@ -49,9 +50,18 @@ graph TB
         SSM[SSM Parameters]
     end
     
+    subgraph "AgentCore Layer"
+        ACS[AgentCore Setup Lambda]
+        ACBM[AgentCore Budget Monitor Lambda]
+        ACMGR[AgentCore Budget Manager Lambda]
+        ACIU[AgentCore IAM Utilities Lambda]
+    end
+
     subgraph "Orchestration Layer"
         SW[Suspension Workflow]
         RW[Restoration Workflow]
+        ACSW[AgentCore Suspension Workflow]
+        ACRW[AgentCore Restoration Workflow]
         SF[Step Functions]
     end
     
@@ -64,8 +74,10 @@ graph TB
     BR --> CW
     IAM --> CT
     CT --> EB
+    AC --> EB
     EB --> US
     EB --> PM
+    EB --> ACS
     CW --> KF
     KF --> UC
     
@@ -75,9 +87,17 @@ graph TB
     AL --> DDB
     PM --> DDB
     
+    ACS --> DDB
+    ACBM --> DDB
+    ACMGR --> DDB
+    UC --> DDB
+
     BM --> SF
+    ACBM --> SF
     SF --> SW
     SF --> RW
+    SF --> ACSW
+    SF --> ACRW
     
     SW --> SNS
     RW --> SNS
@@ -207,7 +227,60 @@ graph TB
 - `Policy Backup`: Backs up original policies before suspension
 - `Restoration Validation`: Validates restoration eligibility
 
-### 5. Monitoring and Alerting Layer
+### 5. AgentCore Budgeting Layer
+
+**Gated by feature flag:** `enable_agentcore_budgeting` in `cdk.json`.
+
+The AgentCoreConstruct extends budget management to AWS Bedrock AgentCore runtimes. Unlike the API key flow (which detaches a single managed policy), AgentCore suspension snapshots all role policies, strips them, attaches a deny-all inline policy, and tags the role with a management marker.
+
+**DynamoDB Table:**
+- `agentcore-budgets` — tracks per-runtime budgets and a `GLOBAL_POOL` singleton row. Uses a `role_arn-index` GSI so the usage_calculator can match caller role ARNs to registered runtimes.
+
+**Budget Model:**
+- A `GLOBAL_POOL` singleton row defines the total AgentCore spend pool.
+- Per-runtime rows track individual agent carve-outs from the global pool.
+
+**Lambda Functions:**
+
+1. **AgentCore Setup Lambda**
+   - Triggered by lifecycle events from `bedrock-agentcore.amazonaws.com` via EventBridge
+   - Registers new AgentCore runtimes in the agentcore-budgets table
+   - Initializes per-agent budget carve-outs from the global pool
+
+2. **AgentCore Budget Monitor Lambda**
+   - Runs every 5 minutes via EventBridge schedule
+   - Evaluates budget thresholds against both per-agent and global pool limits
+   - Initiates grace periods and triggers suspension workflows
+
+3. **AgentCore Budget Manager Lambda**
+   - Exposed via Function URL with IAM authentication
+   - Provides an API for managing agent budgets (CRUD operations on budget allocations)
+
+4. **AgentCore IAM Utilities Lambda**
+   - Manages role policy operations for suspension/restoration
+   - Suspension: snapshot all role policies, strip them, attach deny-all inline policy, tag role with `BedrockBudgeteerManaged`
+   - Restoration: delete deny-all policy, reattach managed policies, recreate inline policies, untag role, reset budget
+
+**Step Functions State Machines:**
+
+1. **AgentCore Suspension Workflow**
+   - Grace notification → wait → strip all role policies → attach deny-all → tag role → update status
+
+2. **AgentCore Restoration Workflow**
+   - Validate restoration → delete deny-all → restore managed policies → recreate inline policies → untag role → reset budget
+
+**Integration with Existing Constructs:**
+- The usage_calculator Lambda performs an early routing check: if the caller role ARN matches a registered AgentCore runtime (via the `role_arn-index` GSI), usage is tracked in the agentcore-budgets table instead of user-budgets.
+- IAM permissions for role management (list/attach/detach/put/delete policies, tag/untag roles) are scoped to roles with the `BedrockBudgeteerManaged` tag.
+
+**SSM Parameters** (under `/bedrock-budgeteer/global/agentcore/`):
+- `global_budget_limit_usd` — total AgentCore spend pool
+- `grace_period_seconds` — seconds before suspension after budget exceeded
+- `warning_threshold_percent` — warning alert threshold
+- `critical_threshold_percent` — critical alert threshold
+- `default_per_agent_budget_usd` — default budget for new agent runtimes
+
+### 6. Monitoring and Alerting Layer
 
 **SNS Topics:**
 - `operational-alerts`: System operational issues
@@ -330,7 +403,13 @@ sequenceDiagram
 │   ├── thresholds_percent_warn (70)
 │   ├── thresholds_percent_critical (90)
 │   ├── default_user_budget_usd (1)
-│   └── grace_period_seconds (300)
+│   ├── grace_period_seconds (300)
+│   └── agentcore/
+│       ├── global_budget_limit_usd
+│       ├── grace_period_seconds
+│       ├── warning_threshold_percent
+│       ├── critical_threshold_percent
+│       └── default_per_agent_budget_usd
 └── production/
     └── cost/
         └── budget_refresh_period_days (30)
