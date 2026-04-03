@@ -53,6 +53,52 @@ custom_policy = security.create_policy_template(
 )
 ```
 
+### 6. AgentCore IAM Role Management Policy Template
+
+Tag-scoped IAM permissions used by `SecurityConstruct.add_agentcore_iam_permissions()` for managing AgentCore agent roles. All mutating actions (except initial tagging) are restricted to roles tagged with `BedrockBudgeteerManaged: "true"`.
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AgentCoreRoleManagementTagScoped",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:GetRolePolicy",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:ListRoleTags"
+            ],
+            "Resource": "arn:aws:iam::*:role/*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/BedrockBudgeteerManaged": "true"
+                }
+            }
+        },
+        {
+            "Sid": "AgentCoreRoleTaggingUnconditioned",
+            "Effect": "Allow",
+            "Action": [
+                "iam:TagRole",
+                "iam:UntagRole"
+            ],
+            "Resource": "arn:aws:iam::*:role/*"
+        }
+    ]
+}
+```
+
+**Design Notes:**
+- `iam:TagRole` and `iam:UntagRole` are unconditioned to allow the system to apply the `BedrockBudgeteerManaged` tag to roles before they satisfy the tag condition.
+- All other IAM actions require the `BedrockBudgeteerManaged: "true"` tag on the target role, preventing the system from modifying roles it does not manage.
+- This policy is added to the Lambda execution role by the `add_agentcore_iam_permissions()` method in `SecurityConstruct`.
+
 ## Cross-Service Permission Patterns
 
 ### Lambda → DynamoDB

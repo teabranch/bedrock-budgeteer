@@ -23,7 +23,13 @@ Centralized configuration management using AWS Systems Manager Parameter Store w
 ├── thresholds_percent_warn
 ├── thresholds_percent_critical
 ├── default_user_budget_usd
-└── grace_period_seconds
+├── grace_period_seconds
+└── agentcore/
+    ├── global_budget_limit_usd
+    ├── grace_period_seconds
+    ├── warning_threshold_percent
+    ├── critical_threshold_percent
+    └── default_per_agent_budget_usd
 ```
 
 ## Parameter Details
@@ -51,6 +57,19 @@ Centralized configuration management using AWS Systems Manager Parameter Store w
 | `thresholds_percent_critical` | String | 90 | Budget critical threshold percentage | ConfigurationManager in Lambdas |
 | `default_user_budget_usd` | String | 1 | Default budget limit for users in USD | User setup and usage calculator Lambdas |
 | `grace_period_seconds` | String | 300 | Grace period in seconds before suspending users who exceed budget | Budget monitor and suspension workflows |
+
+### 4. AgentCore Configuration (Global)
+**Path**: `/bedrock-budgeteer/global/agentcore/`
+
+Requires the `enable_agentcore_budgeting` feature flag in `cdk.json`.
+
+| Parameter | Type | Value | Description | Used By |
+|-----------|------|-------|-------------|---------|
+| `global_budget_limit_usd` | String | 500 | Global budget limit for all AgentCore agents in USD | AgentCore budget monitor and budget manager Lambdas |
+| `grace_period_seconds` | String | 3600 | Grace period in seconds before suspending agents that exceed budget | AgentCore budget monitor and suspension workflows |
+| `warning_threshold_percent` | String | 75 | AgentCore budget warning threshold percentage | AgentCore budget monitor Lambda |
+| `critical_threshold_percent` | String | 90 | AgentCore budget critical threshold percentage | AgentCore budget monitor Lambda |
+| `default_per_agent_budget_usd` | String | none | Default per-agent budget limit in USD; "none" means no per-agent limit (global budget applies) | AgentCore usage calculator and budget manager Lambdas |
 
 ## Parameter Types
 

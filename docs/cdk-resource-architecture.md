@@ -16,7 +16,7 @@ For the conceptual architecture and data flow diagrams, see
 
 **Entry point:** `app/app.py` creates a single `BedrockBudgeteerStack` (environment: `production`).
 
-The stack assembles 9 CDK constructs in strict dependency order:
+The stack assembles up to 10 CDK constructs in strict dependency order (AgentCoreConstruct is feature-flagged):
 
 ```text
 TaggingFramework          (CDK Aspect -- applies tags to everything below)
@@ -36,7 +36,10 @@ EventIngestionConstruct   (CloudTrail, EventBridge, Firehose)
 MonitoringConstruct       (SNS, dashboards, alarms)
      |
 WorkflowOrchestrationConstruct  (Step Functions, workflow Lambdas)
-                           depends on: tables, core Lambdas, SF role, lambda role, SNS topics
+     |                     depends on: tables, core Lambdas, SF role, lambda role, SNS topics
+AgentCoreConstruct            (DynamoDB, Lambdas, EventBridge, Step Functions)
+                           depends on: lambda role, SF role, SNS topics
+                           gated by: enable_agentcore_budgeting feature flag
 ```
 
 After all constructs are created, the stack wires up cross-cutting concerns:
@@ -419,6 +422,91 @@ One DLQ per workflow Lambda, same configuration as core DLQs.
 Lambda gets additional IAM write permissions (attach/detach policies) beyond the
 shared Lambda execution role.
 
+## 10. AgentCoreConstruct
+
+**Source:** `app/app/constructs/agentcore.py`
+
+**Feature flag:** `enable_agentcore_budgeting` in `cdk.json` feature flags. This entire construct is only deployed when the flag is enabled.
+
+### DynamoDB Tables (1)
+
+| Table | Partition Key | Sort Key | GSIs |
+|-------|--------------|----------|------|
+| `bedrock-budgeteer-{env}-agentcore-budgets` | `runtime_id` (S) | -- | `role_arn-index` (pk: `role_arn`, sk: `runtime_id`) |
+
+The table stores a `GLOBAL_POOL` singleton row for the total AgentCore spend pool and per-runtime rows for individual agent budget carve-outs.
+
+### Lambda Functions (4)
+
+| Function Name | Memory | Timeout | Trigger | Purpose |
+|---------------|--------|---------|---------|---------|
+| `bedrock-budgeteer-agentcore-setup-{env}` | 512 MB | 5 min | EventBridge (AgentCore lifecycle events) | Register new AgentCore runtimes, initialize per-agent budget carve-outs |
+| `bedrock-budgeteer-agentcore-budget-monitor-{env}` | 512 MB | 5 min | EventBridge schedule (every 5 min) | Evaluate per-agent and global pool thresholds, trigger suspension/restoration |
+| `bedrock-budgeteer-agentcore-budget-manager-{env}` | 512 MB | 5 min | Function URL (IAM auth) | API for managing agent budget allocations (CRUD) |
+| `bedrock-budgeteer-agentcore-iam-utilities-{env}` | 512 MB | 5 min | Step Functions | Snapshot/strip/restore role policies, attach deny-all, tag/untag roles |
+
+### SQS Dead Letter Queues (4)
+
+One DLQ per Lambda function, same configuration as core DLQs (14-day retention, 5-min visibility timeout, KMS encryption).
+
+### EventBridge Rules (2)
+
+| Rule | Event Pattern / Schedule | Target |
+|------|--------------------------|--------|
+| `bedrock-budgeteer-{env}-agentcore-lifecycle` | source: `bedrock-agentcore.amazonaws.com` (lifecycle events) | agentcore_setup Lambda |
+| `bedrock-budgeteer-{env}-agentcore-budget-monitor-schedule` | rate(5 minutes) | agentcore_budget_monitor Lambda |
+
+### Step Functions State Machines (2)
+
+**AgentCore Suspension Workflow:**
+
+```text
+SendGraceNotification --> GracePeriodWait --> SnapshotRolePolicies
+     --> StripAllPolicies --> AttachDenyAll --> TagRole
+     --> UpdateRuntimeStatus --> Success
+```
+
+- Suspension snapshots all role policies, strips them, attaches a deny-all inline policy, and tags the role with `BedrockBudgeteerManaged`
+
+**AgentCore Restoration Workflow:**
+
+```text
+ValidateRestoration --> DeleteDenyAllPolicy --> ReattachManagedPolicies
+     --> RecreateInlinePolicies --> UntagRole --> ResetBudget --> Success
+```
+
+### Function URL (1)
+
+| Function | Auth Type | Purpose |
+|----------|-----------|---------|
+| `bedrock-budgeteer-agentcore-budget-manager-{env}` | IAM | HTTP API for agent budget management |
+
+### IAM Permissions (scoped)
+
+The agentcore_iam_utilities Lambda receives additional IAM permissions beyond the shared Lambda execution role:
+
+- `iam:ListAttachedRolePolicies`, `iam:AttachRolePolicy`, `iam:DetachRolePolicy`
+- `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:ListRolePolicies`
+- `iam:TagRole`, `iam:UntagRole`
+
+All role management permissions are scoped to roles with the `BedrockBudgeteerManaged` tag.
+
+### SSM Parameters (5)
+
+| Parameter Path | Purpose |
+|----------------|---------|
+| `/bedrock-budgeteer/global/agentcore/global_budget_limit_usd` | Total AgentCore spend pool |
+| `/bedrock-budgeteer/global/agentcore/grace_period_seconds` | Seconds before suspension |
+| `/bedrock-budgeteer/global/agentcore/warning_threshold_percent` | Warning alert threshold |
+| `/bedrock-budgeteer/global/agentcore/critical_threshold_percent` | Critical alert threshold |
+| `/bedrock-budgeteer/global/agentcore/default_per_agent_budget_usd` | Default budget for new runtimes |
+
+**Connects to:** The usage_calculator Lambda (CoreProcessingConstruct) performs an early routing
+check: if the caller role ARN matches a registered AgentCore runtime via the `role_arn-index` GSI,
+usage is tracked in the agentcore-budgets table. SecurityConstruct provides the Lambda execution
+and Step Functions roles. MonitoringConstruct receives the AgentCore Lambdas, DLQs, and state
+machines for alarm creation.
+
 ## End-to-End Integration Map
 
 ### Bedrock --> Budgeteer (usage capture)
@@ -536,18 +624,19 @@ bedrock-budgeteer-{component}-{environment}   (Lambdas, DLQs, Step Functions)
 
 | AWS Service | Count | Resources |
 |-------------|-------|-----------|
-| DynamoDB Tables | 4 | user-budgets, usage-tracking, audit-logs, pricing |
-| Lambda Functions | 12+ | 7 core + 4 workflow + 1 logs-forwarder (+ conditional Slack/webhook Lambdas if env vars set) |
-| SQS Queues (DLQs) | 10 | 6 core + 4 workflow |
+| DynamoDB Tables | 4 (+1 if AgentCore) | user-budgets, usage-tracking, audit-logs, pricing (+agentcore-budgets) |
+| Lambda Functions | 12+ (+4 if AgentCore) | 7 core + 4 workflow + 1 logs-forwarder (+ conditional Slack/webhook Lambdas if env vars set) (+4 AgentCore) |
+| SQS Queues (DLQs) | 10 (+4 if AgentCore) | 6 core + 4 workflow (+4 AgentCore) |
 | IAM Roles | 4 | lambda-execution, step-functions, eventbridge, bedrock-logging |
 | IAM Managed Policies | 2 | dynamodb-access, eventbridge-publish |
 | S3 Buckets | 1 | logs |
 | SNS Topics | 3 | operational-alerts, budget-alerts, high-severity |
 | CloudTrail Trails | 1 | trail |
-| EventBridge Rules | 5+ | 3 ingestion + 2 workflow triggers + schedules |
+| EventBridge Rules | 5+ (+2 if AgentCore) | 3 ingestion + 2 workflow triggers + schedules (+2 AgentCore) |
 | Firehose Streams | 2 | usage-logs, audit-logs |
-| Step Functions | 2 | suspension, restoration |
+| Step Functions | 2 (+2 if AgentCore) | suspension, restoration (+AgentCore suspension, AgentCore restoration) |
 | CloudWatch Dashboards | 3 | system, ingestion-pipeline, workflow |
 | CloudWatch Alarms | ~20+ | Per Lambda, table, trail, rule, stream, and DLQ |
-| SSM Parameters | 6 | 2 env-scoped + 4 global |
+| SSM Parameters | 6 (+5 if AgentCore) | 2 env-scoped + 4 global (+5 AgentCore global) |
 | CloudWatch Log Groups | 1+ | Bedrock invocation logs (+ Lambda runtime-created function log groups) |
+| Function URLs | 0 (+1 if AgentCore) | AgentCore budget manager (IAM auth) |

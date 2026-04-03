@@ -52,6 +52,7 @@ cdk destroy                                        # Tear down stack
 7. **EventIngestionConstruct** — CloudTrail → EventBridge → Kinesis Firehose pipeline; Bedrock invocation log group with Lambda forwarder
 8. **MonitoringConstruct** — CloudWatch dashboards, alarms, SNS topics (high_severity, operational_alerts, budget_alerts), multi-channel notifications
 9. **WorkflowOrchestrationConstruct** — Step Functions state machines for suspension and restoration workflows
+10. **AgentCoreConstruct** — DynamoDB table, Lambda functions (agentcore_setup, agentcore_budget_monitor, agentcore_budget_manager with Function URL, agentcore_iam_utilities), EventBridge rules, Step Functions for AgentCore runtime suspension/restoration workflows
 
 ### Data Flow
 
@@ -66,6 +67,10 @@ Budget Monitor (5-min schedule) → EventBridge → Step Functions
          ↓                                          ↓
    Suspension workflow                    Restoration workflow
    (grace notification → wait → detach policy)  (validate refresh → restore policy → reset budget)
+
+AgentCore runtime lifecycle event → EventBridge → agentcore_setup → DynamoDB (agentcore-budgets)
+Agent Bedrock API call → usage_calculator → role ARN match via GSI → agentcore-budgets table
+agentcore_budget_monitor (5-min schedule) → suspension/restoration Step Functions
 ```
 
 ### Key Design Decisions
@@ -75,6 +80,8 @@ Budget Monitor (5-min schedule) → EventBridge → Step Functions
 - **Lambda code is inline** — function implementations live in `constructs/lambda_functions/` and `constructs/workflow_lambda_functions/` as Python strings returned by `get_*_function_code()` functions.
 - **Shared utilities** (`constructs/shared/`) are concatenated into each function's inline `Code.from_inline()` source string (not Lambda Layers): `configuration_manager`, `dynamodb_helpers`, `metrics_publisher`, `lambda_utilities`, `event_publisher`, `pricing_calculator`.
 - **Optional KMS encryption** — all constructs accept an optional `kms_key` parameter; pass the key through the stack constructor or CDK app configuration.
+- **AgentCore suspension = snapshot + strip + deny-all** — unlike API key suspension (managed policy detach), AgentCore runtime suspension snapshots all role policies, strips them, attaches a deny-all inline policy, and tags the role. Restoration reverses the process: delete deny-all, reattach managed policies, recreate inline policies, untag, and reset budget.
+- **Feature flag gating** — `enable_agentcore_budgeting` in `cdk.json` feature flags controls whether the AgentCoreConstruct is instantiated. The construct and all its resources are only deployed when the flag is enabled.
 - **Emergency controls were removed** — no maintenance mode or emergency stop (see CHANGELOG.md).
 
 ### Test Structure
@@ -83,4 +90,4 @@ Tests are in `app/tests/unit/`. They use `moto` for AWS service mocking and CDK 
 
 ### Configuration
 
-Runtime config is via SSM parameters under `/bedrock-budgeteer/{environment}/{category}/{key}` and `/bedrock-budgeteer/global/{key}`. CDK context config is in `cdk.json` under `bedrock-budgeteer:config` and `bedrock-budgeteer:feature-flags`.
+Runtime config is via SSM parameters under `/bedrock-budgeteer/{environment}/{category}/{key}` and `/bedrock-budgeteer/global/{key}`. AgentCore parameters live under `/bedrock-budgeteer/global/agentcore/` (global_budget_limit_usd, grace_period_seconds, warning_threshold_percent, critical_threshold_percent, default_per_agent_budget_usd). CDK context config is in `cdk.json` under `bedrock-budgeteer:config` and `bedrock-budgeteer:feature-flags`.

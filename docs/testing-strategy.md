@@ -84,6 +84,77 @@ AWS_PROFILE=dev python -m pytest tests/integration/ -v
 - Budget threshold alerts
 - Account suspension workflow
 - Budget restoration process
+- AgentCore lifecycle detection and budget initialization
+- AgentCore usage attribution via role ARN matching
+- AgentCore suspension and restoration workflows
+
+### 4. AgentCore Test Coverage
+
+**Purpose**: Validate AgentCore budgeting feature including Lambda code, CDK constructs, IAM utilities, feature flags, and usage routing
+**Framework**: pytest + moto + aws_cdk.assertions
+**Location**: `app/tests/unit/`
+**Total**: 64 tests across 6 test files
+
+#### Test Files
+
+##### test_agentcore_setup.py (11 tests)
+- Agent lifecycle event detection (CreateAgent, UpdateAgent)
+- Budget record initialization with default limits
+- Agent-to-role-ARN mapping persistence
+- Duplicate agent handling and idempotency
+- Invalid event payload handling
+
+##### test_agentcore_budget_monitor.py (13 tests)
+- Scheduled scan of agent budgets (5-minute interval)
+- Threshold evaluation (warning at 70%, critical at 90%, exceeded at 100%)
+- Grace period initiation and expiry logic
+- Suspension event publishing to EventBridge
+- Budget refresh date detection and restoration event publishing
+
+##### test_agentcore_budget_manager.py (10 tests)
+- Budget limit creation and updates
+- Budget period reset logic
+- Spent amount accumulation and tracking
+- Status transitions (active, warning, grace_period, suspended)
+- Budget refresh period configuration
+
+##### test_agentcore_iam_utilities.py (14 tests)
+- Execution role policy attachment and detachment
+- Policy backup before suspension
+- Policy restoration from backup
+- Error handling for missing roles and policies
+- Cross-account role ARN validation
+
+##### test_agentcore_usage_routing.py (12 tests)
+- Role ARN extraction from Bedrock usage events
+- Role ARN matching to agent budget records
+- Cost attribution to correct agent budget
+- Fallback behavior when no agent match found (route to user budget)
+- Multi-agent concurrent usage tracking
+
+##### test_agentcore_stack.py (3 tests)
+- CDK construct synthesis with AgentCore feature flag enabled
+- CDK construct synthesis with AgentCore feature flag disabled (no resources created)
+- Resource count and type validation for AgentCore construct
+
+#### Test Categories Summary
+
+| Category | Files | Tests | Description |
+|----------|-------|-------|-------------|
+| Lambda Code Validation | 4 | 46 | Business logic for setup, monitoring, budget management, usage routing |
+| CDK Construct | 1 | 3 | Infrastructure synthesis and feature flag gating |
+| IAM Utilities | 1 | 14 | Role policy operations for suspension/restoration |
+| Feature Flag | 1 | 1 | Construct disabled when feature flag is off (subset of stack tests) |
+
+#### Running AgentCore Tests
+```bash
+cd app
+# Run all AgentCore tests
+python -m pytest tests/unit/ -v -k "agentcore"
+
+# Run a specific AgentCore test file
+python -m pytest tests/unit/test_agentcore_setup.py -v
+```
 
 ## Test Data Management
 

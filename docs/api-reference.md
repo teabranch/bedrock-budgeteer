@@ -338,6 +338,177 @@ def state_machines(self) -> Dict[str, sfn.StateMachine]
 - `policy_backup`: Policy backup operations
 - `restoration_validation`: Restoration eligibility validation
 
+### AgentCoreConstruct
+
+Manages AgentCore budget tracking, enforcement, and management API. Enabled via the `enable_agentcore_budgeting` feature flag in `cdk.json`.
+
+**Constructor:**
+```python
+AgentCoreConstruct(
+    scope: Construct,
+    construct_id: str,
+    environment_name: str,
+    dynamodb_tables: Dict[str, dynamodb.Table],
+    lambda_execution_role: iam.Role,
+    step_functions_role: iam.Role,
+    sns_topics: Optional[Dict[str, sns.Topic]] = None,
+    kms_key: Optional[kms.Key] = None,
+    **kwargs
+)
+```
+
+**Resources Created:**
+- **DynamoDB Table**: `agentcore-budgets` — tracks per-agent and global budget state
+- **Lambda Functions** (4):
+  - `agentcore_usage_calculator`: Processes AgentCore invocation events and calculates costs
+  - `agentcore_budget_monitor`: Evaluates agent budget thresholds and triggers workflows
+  - `agentcore_budget_manager`: Function URL API for budget management operations (see below)
+  - `agentcore_budget_refresh`: Resets agent budgets on refresh cycle
+- **EventBridge Rules**: Routes AgentCore usage events to the usage calculator and budget monitor
+- **Step Functions**: Suspension and restoration workflows for AgentCore agents
+
+**Properties:**
+```python
+@property
+def agentcore_table(self) -> dynamodb.Table
+    """AgentCore budgets DynamoDB table"""
+
+@property
+def functions(self) -> Dict[str, lambda_.Function]
+    """Dictionary of AgentCore Lambda functions"""
+
+@property
+def state_machines(self) -> Dict[str, sfn.StateMachine]
+    """Dictionary of AgentCore Step Functions state machines"""
+```
+
+#### Budget Manager API (Function URL)
+
+The `agentcore_budget_manager` Lambda is exposed via a Function URL with IAM authentication. All requests use a JSON body with an `action` field.
+
+**Authentication:** AWS IAM (SigV4 signed requests)
+
+**Operations:**
+
+##### set_agent_budget
+
+Set or update a per-agent budget.
+
+**Request:**
+```json
+{
+  "action": "set_agent_budget",
+  "runtime_id": "agent-runtime-id-123",
+  "budget_limit_usd": 100.0
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "runtime_id": "agent-runtime-id-123",
+    "budget_limit_usd": 100.0,
+    "spent_usd": 0.0,
+    "status": "active",
+    "updated_at": "2026-04-03T12:00:00Z"
+  },
+  "error": null
+}
+```
+
+##### remove_agent_budget
+
+Remove a per-agent budget (agent falls back to global budget).
+
+**Request:**
+```json
+{
+  "action": "remove_agent_budget",
+  "runtime_id": "agent-runtime-id-123"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "runtime_id": "agent-runtime-id-123",
+    "removed": true
+  },
+  "error": null
+}
+```
+
+##### set_global_budget
+
+Set or update the global AgentCore budget limit.
+
+**Request:**
+```json
+{
+  "action": "set_global_budget",
+  "budget_limit_usd": 500.0
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "budget_limit_usd": 500.0,
+    "updated_at": "2026-04-03T12:00:00Z"
+  },
+  "error": null
+}
+```
+
+##### get_budget_status
+
+Retrieve the current budget status for an agent or the global budget.
+
+**Request (per-agent):**
+```json
+{
+  "action": "get_budget_status",
+  "runtime_id": "agent-runtime-id-123"
+}
+```
+
+**Request (global):**
+```json
+{
+  "action": "get_budget_status"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "runtime_id": "agent-runtime-id-123",
+    "budget_limit_usd": 100.0,
+    "spent_usd": 42.50,
+    "status": "active",
+    "budget_usage_percent": 42.5
+  },
+  "error": null
+}
+```
+
+**Error Response (all operations):**
+```json
+{
+  "success": false,
+  "data": null,
+  "error": "Invalid action or missing required fields"
+}
+```
+
 ### MonitoringConstruct
 
 Manages CloudWatch resources, dashboards, and alarms.

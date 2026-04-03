@@ -179,10 +179,23 @@ The `app/cdk.json` file contains the application configuration:
         "logs": 180,
         "data": 2555
       }
+    },
+    "bedrock-budgeteer:feature-flags": {
+      "enable_agentcore_budgeting": true
     }
   }
 }
 ```
+
+### Feature Flags
+
+Feature flags are configured under `bedrock-budgeteer:feature-flags` in `cdk.json`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `enable_agentcore_budgeting` | `false` | Enables AgentCore budgeting resources: 1 DynamoDB table, 4 Lambda functions, 4 SQS DLQs, 2 Step Functions, 2 EventBridge rules, and a Function URL for the budget management API. |
+
+To enable AgentCore budgeting, set `enable_agentcore_budgeting: true` in `cdk.json` and redeploy. SSM parameters are auto-created under `/bedrock-budgeteer/global/agentcore/`.
 
 ### SSM Parameter Pre-Configuration (Optional)
 You can pre-configure SSM parameters before deployment:
@@ -292,7 +305,22 @@ aws cloudwatch list-dashboards --output table
 aws cloudwatch describe-alarms --query 'MetricAlarms[?contains(AlarmName, `bedrock-budgeteer`)].AlarmName' --output table
 ```
 
-### 4. Test Core Functionality
+### 4. Verify AgentCore Resources (if enabled)
+
+If `enable_agentcore_budgeting` is set to `true`, verify the AgentCore resources were created:
+
+```bash
+# Check the AgentCore Function URL
+aws lambda list-function-url-configs \
+  --function-name bedrock-budgeteer-agentcore-api-production \
+  --query 'FunctionUrlConfigs[0].FunctionUrl' --output text
+
+# Verify AgentCore EventBridge rules are active
+aws events list-rules \
+  --query 'Rules[?contains(Name, `agentcore`)].{Name:Name,State:State}' --output table
+```
+
+### 5. Test Core Functionality
 ```bash
 # Run unit tests
 cd app
