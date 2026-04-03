@@ -1,6 +1,6 @@
 ---
 title: CDK Resource Architecture
-nav_order: 3
+nav_order: 16
 ---
 
 # CDK Resource Architecture
@@ -49,7 +49,7 @@ After all constructs are created, the stack wires up cross-cutting concerns:
 
 ## 1. TaggingFramework
 
-**Source:** `app/constructs/tagging.py`
+**Source:** `app/app/constructs/tagging.py`
 
 Creates no AWS resources directly. Registers a single CDK Aspect
 (`UnifiedTaggingAspect`) that visits every CloudFormation resource at synth time
@@ -85,7 +85,7 @@ and applies tags in one pass.
 
 ## 2. SecurityConstruct
 
-**Source:** `app/constructs/security.py`
+**Source:** `app/app/constructs/security.py`
 
 ### IAM Roles (4)
 
@@ -115,14 +115,14 @@ are created:
 - **IAM:** Read-only (`GetUser`, `ListAttachedUserPolicies`, etc.)
 - **CloudWatch:** `PutMetricData`
 - **DynamoDB:** Full access to all application tables
-- **S3:** Read/write to the logs bucket
+- **S3:** Read-only access to the logs bucket
 - **SQS:** `SendMessage` to all DLQs
 
 **Connects to:** Every other construct consumes roles from SecurityConstruct.
 
 ## 3. DataStorageConstruct
 
-**Source:** `app/constructs/data_storage.py`
+**Source:** `app/app/constructs/data_storage.py`
 
 ### DynamoDB Tables (4)
 
@@ -133,13 +133,23 @@ are created:
 | `bedrock-budgeteer-{env}-audit-logs` | `event_id` (S) | `event_time` (S) | `UserAuditIndex` (pk: `user_identity`, sk: `event_time`), `EventSourceIndex` (pk: `event_source`, sk: `event_time`) |
 | `bedrock-budgeteer-{env}-pricing` | `model_id` (S) | `region` (S) | -- |
 
-### Common table configuration
+### Provisioned capacity (per table)
+
+| Table | Read Capacity | Write Capacity |
+|-------|--------------|----------------|
+| user-budgets | 5 | 5 |
+| usage-tracking | 10 | 20 |
+| audit-logs | 10 | 25 |
+| pricing | 5 | 2 |
+
+All tables auto-scale at 70% target utilization.
+
+### Common table settings
 
 | Setting | Value |
 |---------|-------|
-| Billing mode | PROVISIONED (baseline 5 RCU / 5 WCU) |
-| Auto-scaling | Enabled, 70% target utilization |
-| Encryption | AWS-managed (or customer KMS if `--context kmsKeyArn` provided) |
+| Billing mode | PROVISIONED |
+| Encryption | AWS-managed (or customer KMS if key provided) |
 | Point-in-time recovery | Disabled (allows clean rollback) |
 | Removal policy | DESTROY |
 
@@ -151,7 +161,7 @@ receive the `tables` dict. Every Lambda reads/writes these tables at runtime.
 
 ## 4. LogStorageConstruct
 
-**Source:** `app/constructs/log_storage.py`
+**Source:** `app/app/constructs/log_storage.py`
 
 ### S3 Buckets (1)
 
@@ -175,7 +185,7 @@ receive the `tables` dict. Every Lambda reads/writes these tables at runtime.
 
 ## 5. ConfigurationConstruct
 
-**Source:** `app/constructs/configuration.py`
+**Source:** `app/app/constructs/configuration.py`
 
 ### SSM Parameters (6)
 
@@ -197,7 +207,7 @@ is passed to MonitoringConstruct.
 
 ## 6. CoreProcessingConstruct
 
-**Source:** `app/constructs/core_processing.py`
+**Source:** `app/app/constructs/core_processing.py`
 
 ### Lambda Functions (7)
 
@@ -212,8 +222,8 @@ is passed to MonitoringConstruct.
 | `bedrock-budgeteer-pricing-manager-{env}` | 512 MB | 5 min | EventBridge schedule (daily) | Refresh Bedrock model pricing from AWS Pricing API |
 
 All functions use Python 3.11 runtime, share the Lambda execution role, and have
-inline code generated from `constructs/lambda_functions/` and
-`constructs/shared/lambda_utilities.py`.
+inline code generated from `app/app/constructs/lambda_functions/` and
+`app/app/constructs/shared/lambda_utilities.py`.
 
 ### SQS Dead Letter Queues (6)
 
@@ -244,7 +254,7 @@ for Firehose data transformation. WorkflowOrchestrationConstruct receives the fu
 
 ## 7. EventIngestionConstruct
 
-**Source:** `app/constructs/event_ingestion.py`
+**Source:** `app/app/constructs/event_ingestion.py`
 
 This construct builds the pipeline that captures Bedrock API activity and feeds
 it into the processing layer.
@@ -255,13 +265,16 @@ it into the processing layer.
 |----------|--------------|
 | `bedrock-budgeteer-{env}-trail` | Multi-region, file validation enabled, CloudWatch Logs (30-day retention), management events capture Bedrock API calls |
 
-### EventBridge Rules (3)
+### EventBridge Rules (3 -- rules only, no targets)
 
-| Rule | Event Pattern | Target |
-|------|--------------|--------|
-| `bedrock-budgeteer-{env}-bedrock-usage` | source: `aws.bedrock`, events: `InvokeModel`, `InvokeModelWithResponseStream`, `GetFoundationModel`, `ListFoundationModels` | Firehose / Lambda |
-| `bedrock-budgeteer-{env}-iam-key-creation` | source: `aws.iam`, events: `CreateUser`, `CreateServiceSpecificCredential`, `AttachRolePolicy` | user_setup Lambda |
-| `bedrock-budgeteer-{env}-iam-bedrock-permissions` | source: `aws.iam`, events: `AttachUserPolicy`, `DetachUserPolicy`, `PutUserPolicy`, `DeleteUserPolicy` | audit_logger Lambda |
+EventIngestionConstruct defines the rules and event patterns below, but does **not**
+attach targets. Target wiring happens in `CoreProcessingConstruct._setup_event_routing()`.
+
+| Rule | Event Pattern |
+|------|--------------|
+| `bedrock-budgeteer-{env}-bedrock-usage` | source: `aws.bedrock`, events: `InvokeModel`, `InvokeModelWithResponseStream`, `GetFoundationModel`, `ListFoundationModels` |
+| `bedrock-budgeteer-{env}-iam-key-creation` | source: `aws.iam`, events: `CreateUser`, `CreateServiceSpecificCredential`, `AttachRolePolicy` |
+| `bedrock-budgeteer-{env}-iam-bedrock-permissions` | source: `aws.iam`, events: `AttachUserPolicy`, `DetachUserPolicy`, `PutUserPolicy`, `DeleteUserPolicy` |
 
 ### Kinesis Data Firehose Streams (2)
 
@@ -305,7 +318,7 @@ streams, and log groups are all passed to MonitoringConstruct for alarm creation
 
 ## 8. MonitoringConstruct
 
-**Source:** `app/constructs/monitoring.py`
+**Source:** `app/app/constructs/monitoring.py`
 
 ### SNS Topics (3)
 
@@ -355,7 +368,7 @@ SNS topics are passed to WorkflowOrchestrationConstruct for workflow notificatio
 
 ## 9. WorkflowOrchestrationConstruct
 
-**Source:** `app/constructs/workflow_orchestration.py`
+**Source:** `app/app/constructs/workflow_orchestration.py`
 
 ### Step Functions State Machines (2)
 
@@ -487,8 +500,9 @@ assigned to Lambdas, table names are injected as environment variables,
 EventBridge rules are created with targets, Firehose is configured with the
 usage_calculator as its data transformer.
 
-At **runtime**, Lambda functions use the shared utility layer
-(`constructs/shared/lambda_utilities.py`) which bundles:
+At **runtime**, Lambda functions use shared utilities that are concatenated into
+each function's `Code.from_inline()` source string (not Lambda Layers).
+The utilities (`app/app/constructs/shared/lambda_utilities.py`) bundle:
 
 - `ConfigurationManager` -- reads SSM parameters with local caching
 - `DynamoDBHelper` -- Decimal/float conversion for DynamoDB
@@ -498,10 +512,11 @@ At **runtime**, Lambda functions use the shared utility layer
 
 ## Resource Naming Convention
 
-All resources follow the pattern:
+Resources use two naming patterns depending on service:
 
 ```text
-bedrock-budgeteer-{component}-{environment}
+bedrock-budgeteer-{environment}-{component}   (tables, SNS, trails, Firehose, S3)
+bedrock-budgeteer-{component}-{environment}   (Lambdas, DLQs, Step Functions)
 ```
 
 | Resource Type | Example |
@@ -522,7 +537,7 @@ bedrock-budgeteer-{component}-{environment}
 | AWS Service | Count | Resources |
 |-------------|-------|-----------|
 | DynamoDB Tables | 4 | user-budgets, usage-tracking, audit-logs, pricing |
-| Lambda Functions | 12 | 7 core + 4 workflow + 1 logs-forwarder |
+| Lambda Functions | 12+ | 7 core + 4 workflow + 1 logs-forwarder (+ conditional Slack/webhook Lambdas if env vars set) |
 | SQS Queues (DLQs) | 10 | 6 core + 4 workflow |
 | IAM Roles | 4 | lambda-execution, step-functions, eventbridge, bedrock-logging |
 | IAM Managed Policies | 2 | dynamodb-access, eventbridge-publish |
@@ -535,4 +550,4 @@ bedrock-budgeteer-{component}-{environment}
 | CloudWatch Dashboards | 3 | system, ingestion-pipeline, workflow |
 | CloudWatch Alarms | ~20+ | Per Lambda, table, trail, rule, stream, and DLQ |
 | SSM Parameters | 6 | 2 env-scoped + 4 global |
-| CloudWatch Log Groups | 1+ | Bedrock invocation logs (+ CDK-managed Lambda log groups) |
+| CloudWatch Log Groups | 1+ | Bedrock invocation logs (+ Lambda runtime-created function log groups) |

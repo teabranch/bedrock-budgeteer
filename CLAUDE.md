@@ -48,7 +48,7 @@ cdk destroy                                        # Tear down stack
 3. **DataStorageConstruct** — 4 DynamoDB tables: user-budgets, usage-tracking, audit-logs, pricing
 4. **LogStorageConstruct** — S3 bucket with lifecycle policies for log retention
 5. **ConfigurationConstruct** — SSM Parameter Store hierarchy under `/bedrock-budgeteer/`
-6. **CoreProcessingConstruct** — Lambda functions (usage_calculator, user_setup, budget_monitor, pricing_manager) with DLQs
+6. **CoreProcessingConstruct** — Lambda functions (user_setup, usage_calculator, budget_monitor, budget_refresh, audit_logger, state_reconciliation, pricing_manager) with DLQs
 7. **EventIngestionConstruct** — CloudTrail → EventBridge → Kinesis Firehose pipeline; Bedrock invocation log group with Lambda forwarder
 8. **MonitoringConstruct** — CloudWatch dashboards, alarms, SNS topics (high_severity, operational_alerts, budget_alerts), multi-channel notifications
 9. **WorkflowOrchestrationConstruct** — Step Functions state machines for suspension and restoration workflows
@@ -73,8 +73,8 @@ Budget Monitor (5-min schedule) → EventBridge → Step Functions
 - **Pricing stored in DynamoDB** with daily refresh from AWS Pricing API + static fallbacks for Claude 4 models (not yet in Pricing API). Local 5-minute cache in `BedrockPricingCalculator`.
 - **Suspension = detach AmazonBedrockLimitedAccess policy** (not deny policies). Restoration re-attaches it.
 - **Lambda code is inline** — function implementations live in `constructs/lambda_functions/` and `constructs/workflow_lambda_functions/` as Python strings returned by `get_*_function_code()` functions.
-- **Shared utilities** (`constructs/shared/`) are injected into Lambda code as layers/inline imports: `configuration_manager`, `dynamodb_helpers`, `metrics_publisher`, `lambda_utilities`, `event_publisher`, `pricing_calculator`.
-- **Optional KMS encryption** — pass `--context kmsKeyArn=...` at deploy time; all constructs accept an optional `kms_key`.
+- **Shared utilities** (`constructs/shared/`) are concatenated into each function's inline `Code.from_inline()` source string (not Lambda Layers): `configuration_manager`, `dynamodb_helpers`, `metrics_publisher`, `lambda_utilities`, `event_publisher`, `pricing_calculator`.
+- **Optional KMS encryption** — all constructs accept an optional `kms_key` parameter; pass the key through the stack constructor or CDK app configuration.
 - **Emergency controls were removed** — no maintenance mode or emergency stop (see CHANGELOG.md).
 
 ### Test Structure
