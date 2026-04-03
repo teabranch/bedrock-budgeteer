@@ -1,3 +1,8 @@
+---
+title: API Reference
+nav_order: 7
+---
+
 # API Reference - Bedrock Budgeteer
 
 ## Overview

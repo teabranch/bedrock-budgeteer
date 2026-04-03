@@ -1,3 +1,8 @@
+---
+title: Deployment Guide
+nav_order: 3
+---
+
 # Bedrock Budgeteer Deployment Guide
 
 ## Overview

@@ -1,3 +1,8 @@
+---
+title: System Diagrams
+nav_order: 2
+---
+
 # System Diagrams - Bedrock Budgeteer
 
 ## Overview

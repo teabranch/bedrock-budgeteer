@@ -1,3 +1,8 @@
+---
+title: Tagging Strategy
+nav_order: 15
+---
+
 # Bedrock Budgeteer Tagging Strategy
 
 ## Overview

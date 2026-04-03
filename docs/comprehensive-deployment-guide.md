@@ -1,3 +1,8 @@
+---
+title: Comprehensive Deployment
+nav_order: 4
+---
+
 # Comprehensive Deployment Guide - Bedrock Budgeteer
 
 ## Overview

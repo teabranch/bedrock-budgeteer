@@ -1,3 +1,8 @@
+---
+title: Tagging Framework
+nav_order: 14
+---
+
 # Tagging Framework Implementation
 
 ## Overview

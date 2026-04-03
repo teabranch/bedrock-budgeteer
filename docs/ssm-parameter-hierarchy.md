@@ -1,3 +1,8 @@
+---
+title: SSM Parameters
+nav_order: 12
+---
+
 # SSM Parameter Store Hierarchy
 
 ## Overview

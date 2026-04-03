@@ -1,3 +1,8 @@
+---
+title: IAM Policy Templates
+nav_order: 10
+---
+
 # IAM Policy Templates for Bedrock Budgeteer
 
 ## Overview

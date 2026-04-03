@@ -1,3 +1,8 @@
+---
+title: Enterprise Deployment
+nav_order: 5
+---
+
 # Enterprise Deployment Guide for Bedrock Budgeteer
 
 ## Overview

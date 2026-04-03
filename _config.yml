@@ -1,0 +1,48 @@
+title: Bedrock Budgeteer
+description: >-
+  Serverless AWS CDK application that monitors and controls AWS Bedrock API usage costs in real-time.
+baseurl: "/bedrock-budgeteer"
+url: "https://teabranch.github.io"
+
+theme: just-the-docs
+color_scheme: anthropic
+
+search_enabled: true
+search:
+  button: true
+
+aux_links:
+  "GitHub":
+    - "https://github.com/teabranch/bedrock-budgeteer"
+aux_links_new_tab: true
+
+footer_content: >-
+  Bedrock Budgeteer — Licensed under
+  <a href="https://github.com/teabranch/bedrock-budgeteer/blob/main/LICENSE">MIT</a>.
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: "default"
+
+exclude:
+  - README.md
+  - CLAUDE.md
+  - LICENSE
+  - Gemfile
+  - Gemfile.lock
+  - .gitignore
+  - .github/
+  - .claude/
+  - app/
+  - __pycache__/
+  - CHANGELOG.md
