@@ -418,14 +418,21 @@ Feature flags in `cdk.json` control optional constructs. Set to `true` to enable
 ### Enabling Key Provisioning
 
 1. Set `enable_key_provisioning: true` in `cdk.json` feature flags
-2. Add API keys to the `bedrock-budgeteer:api-keys` list in `cdk.json` (no code changes needed):
-```json
-"bedrock-budgeteer:api-keys": [
-  {"team": "platform", "purpose": "chatbot-prod", "budget_tier": "medium"},
-  {"team": "ml-ops", "purpose": "batch-inference", "budget_tier": "high"}
-]
+2. Use the `manage_keys.py` CLI to add/remove keys (no file editing needed):
+```bash
+# Add a key
+python manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
+
+# Add another key
+python manage_keys.py add --team ml-ops --purpose batch-inference --budget-tier high
+
+# List configured keys
+python manage_keys.py list
+
+# Remove a key
+python manage_keys.py remove --team platform --purpose chatbot-prod
 ```
-   Each entry requires `team` and `purpose` (used in naming: `BedrockAPIKey-{team}-{purpose}`). `budget_tier` defaults to `low` if omitted. Valid tiers: `low` ($1), `medium` ($5), `high` ($25).
+   Valid budget tiers: `low` ($1), `medium` ($5), `high` ($25). Defaults to `low` if omitted. IAM users are named `BedrockAPIKey-{team}-{purpose}`.
 3. Deploy with `cdk deploy`
 4. Keys created outside CDK (via IAM console) will be auto-detected, tagged, and alerted via SNS
 
