@@ -417,24 +417,23 @@ Feature flags in `cdk.json` control optional constructs. Set to `true` to enable
 
 ### Enabling Key Provisioning
 
-1. Set `enable_key_provisioning: true` in `cdk.json` feature flags
-2. Use the `manage_keys.py` CLI to add/remove keys (no file editing needed):
+1. Set `enable_key_provisioning: true` in `cdk.json` feature flags and deploy with `cdk deploy` (enables runtime support: SSM parameters, IAM permissions, SNS wiring for rogue key detection)
+2. Use `manage_keys.py` to provision keys directly in AWS (no CDK deploy needed per key):
 ```bash
-# Add a key
+# Create a key (provisions IAM user immediately)
 python manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
 
-# Add another key
+# Create another key
 python manage_keys.py add --team ml-ops --purpose batch-inference --budget-tier high
 
-# List configured keys
+# List all BedrockAPIKey-* users in AWS
 python manage_keys.py list
 
-# Remove a key
+# Remove a key (deletes IAM user)
 python manage_keys.py remove --team platform --purpose chatbot-prod
 ```
-   Valid budget tiers: `low` ($1), `medium` ($5), `high` ($25). Defaults to `low` if omitted. IAM users are named `BedrockAPIKey-{team}-{purpose}`.
-3. Deploy with `cdk deploy`
-4. Keys created outside CDK (via IAM console) will be auto-detected, tagged, and alerted via SNS
+   Valid budget tiers: `low` ($1), `medium` ($5), `high` ($25). Defaults to `low` if omitted. IAM users are named `BedrockAPIKey-{team}-{purpose}`. The CloudTrail → user_setup pipeline automatically registers budgets when it detects the new user.
+3. Keys created outside `manage_keys.py` (e.g., via IAM console) will be auto-detected, tagged as rogue, and alerted via SNS
 
 ### Enabling Cost Allocation Reporting
 

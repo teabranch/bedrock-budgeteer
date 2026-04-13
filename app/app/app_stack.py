@@ -22,7 +22,6 @@ from .constructs.log_storage import LogStorageConstruct
 from .constructs.core_processing import CoreProcessingConstruct
 from .constructs.workflow_orchestration import WorkflowOrchestrationConstruct
 from .constructs.agentcore import AgentCoreConstruct
-from .constructs.key_provisioning import KeyProvisioningConstruct
 from .constructs.cost_allocation_reporting import CostAllocationReportingConstruct
 # Operational controls removed per changelog - see 2025-09-02 updates
 
@@ -136,31 +135,17 @@ class BedrockBudgeteerStack(Stack):
                 self.security.roles["lambda_execution"]
             )
 
-        # Deploy Key Provisioning (feature-flagged)
+        # Key provisioning runtime support (feature-flagged)
+        # Keys are created externally via manage_keys.py — CDK only sets up
+        # the IAM permissions and SNS wiring needed for rogue key detection.
         if feature_flags.get("enable_key_provisioning"):
             self.security.add_key_provisioning_iam_permissions()
 
-            # Pass SNS topic ARN to user_setup for rogue key alerts
             budget_alerts_topic = self.monitoring.topics.get("budget_alerts")
             if budget_alerts_topic:
                 self.core_processing.functions["user_setup"].add_environment(
                     "BUDGET_ALERTS_SNS_TOPIC_ARN",
                     budget_alerts_topic.topic_arn
-                )
-
-            # Provision API keys from cdk.json config (no code editing needed)
-            api_keys_config = self.node.try_get_context("bedrock-budgeteer:api-keys") or []
-            for key_config in api_keys_config:
-                team = key_config["team"]
-                purpose = key_config["purpose"]
-                budget_tier = key_config.get("budget_tier", "low")
-                KeyProvisioningConstruct(
-                    self, f"ApiKey-{team}-{purpose}",
-                    team=team,
-                    purpose=purpose,
-                    budget_tier=budget_tier,
-                    environment_name=environment_name,
-                    kms_key=self.kms_key,
                 )
 
         # Deploy Cost Allocation Reporting (feature-flagged)

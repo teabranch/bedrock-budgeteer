@@ -1,123 +1,163 @@
 #!/usr/bin/env python3
-"""CLI to manage Bedrock API key provisioning entries in cdk.json.
+"""CLI to provision and manage Bedrock API key IAM users directly via AWS APIs.
 
 Usage:
     ./manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
     ./manage_keys.py remove --team platform --purpose chatbot-prod
     ./manage_keys.py list
 
-After adding/removing keys, deploy with: cdk deploy
+Keys are created immediately in AWS IAM — no CDK deploy needed.
+The existing CloudTrail → EventBridge → user_setup pipeline will automatically
+detect the new user and register its budget based on tags.
 """
 import argparse
-import json
 import sys
-from pathlib import Path
+from typing import Dict, List, Optional
 
-CDK_JSON_PATH = Path(__file__).parent / "cdk.json"
-CONFIG_KEY = "bedrock-budgeteer:api-keys"
+import boto3
+from botocore.exceptions import ClientError
+
 VALID_TIERS = ("low", "medium", "high")
+TIER_BUDGETS = {"low": "$1", "medium": "$5", "high": "$25"}
+BEDROCK_POLICY_ARN = "arn:aws:iam::aws:policy/AmazonBedrockLimitedAccess"
+USER_PREFIX = "BedrockAPIKey-"
 
 
-def load_cdk_json() -> dict:
-    with open(CDK_JSON_PATH) as f:
-        return json.load(f)
+def get_iam_client() -> "boto3.client":
+    return boto3.client("iam")
 
 
-def save_cdk_json(data: dict) -> None:
-    with open(CDK_JSON_PATH, "w") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
+def build_user_name(team: str, purpose: str) -> str:
+    return f"{USER_PREFIX}{team}-{purpose}"
 
 
-def get_keys(data: dict) -> list:
-    return data.get("context", {}).get(CONFIG_KEY, [])
-
-
-def set_keys(data: dict, keys: list) -> dict:
-    data.setdefault("context", {})[CONFIG_KEY] = keys
-    return data
+def build_tags(team: str, purpose: str, budget_tier: str) -> List[Dict[str, str]]:
+    return [
+        {"Key": "BedrockBudgeteer:Team", "Value": team},
+        {"Key": "BedrockBudgeteer:Purpose", "Value": purpose},
+        {"Key": "BedrockBudgeteer:BudgetTier", "Value": budget_tier},
+        {"Key": "BedrockBudgeteer:Provisioned", "Value": "script"},
+        {"Key": "BedrockBudgeteer:ManagedBy", "Value": "bedrock-budgeteer"},
+        {"Key": "CostAllocation:Team", "Value": team},
+        {"Key": "CostAllocation:Purpose", "Value": purpose},
+    ]
 
 
 def add_key(args: argparse.Namespace) -> None:
-    tier = args.budget_tier
-    if tier not in VALID_TIERS:
-        print(f"Error: budget-tier must be one of {VALID_TIERS}, got '{tier}'", file=sys.stderr)
-        sys.exit(1)
+    iam = get_iam_client()
+    user_name = build_user_name(args.team, args.purpose)
+    tags = build_tags(args.team, args.purpose, args.budget_tier)
 
-    data = load_cdk_json()
-    keys = get_keys(data)
-
-    for entry in keys:
-        if entry["team"] == args.team and entry["purpose"] == args.purpose:
-            print(f"Key already exists: team={args.team}, purpose={args.purpose} (tier={entry['budget_tier']})")
-            print(f"Remove it first if you want to change the tier.")
+    try:
+        iam.create_user(UserName=user_name, Tags=tags)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "EntityAlreadyExists":
+            print(f"Error: IAM user '{user_name}' already exists.", file=sys.stderr)
+            print("Use 'list' to see existing keys or 'remove' first.", file=sys.stderr)
             sys.exit(1)
+        raise
 
-    new_entry = {"team": args.team, "purpose": args.purpose, "budget_tier": tier}
-    keys.append(new_entry)
-    save_cdk_json(set_keys(data, keys))
+    iam.attach_user_policy(UserName=user_name, PolicyArn=BEDROCK_POLICY_ARN)
 
-    print(f"Added: BedrockAPIKey-{args.team}-{args.purpose} (tier={tier})")
-    print(f"Run 'cdk deploy' to provision the key.")
+    print(f"Created: {user_name}")
+    print(f"  Budget tier: {args.budget_tier} ({TIER_BUDGETS[args.budget_tier]})")
+    print(f"  Policy: AmazonBedrockLimitedAccess")
+    print(f"  Tags: team={args.team}, purpose={args.purpose}")
+    print()
+    print("The user_setup Lambda will automatically register this key's budget")
+    print("when CloudTrail delivers the CreateUser event (typically within minutes).")
 
 
 def remove_key(args: argparse.Namespace) -> None:
-    data = load_cdk_json()
-    keys = get_keys(data)
-    original_len = len(keys)
+    iam = get_iam_client()
+    user_name = build_user_name(args.team, args.purpose)
 
-    keys = [e for e in keys if not (e["team"] == args.team and e["purpose"] == args.purpose)]
+    try:
+        iam.get_user(UserName=user_name)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchEntity":
+            print(f"Error: IAM user '{user_name}' does not exist.", file=sys.stderr)
+            sys.exit(1)
+        raise
 
-    if len(keys) == original_len:
-        print(f"Key not found: team={args.team}, purpose={args.purpose}", file=sys.stderr)
-        sys.exit(1)
+    # Detach managed policies
+    attached = iam.list_attached_user_policies(UserName=user_name)
+    for policy in attached.get("AttachedPolicies", []):
+        iam.detach_user_policy(UserName=user_name, PolicyArn=policy["PolicyArn"])
 
-    save_cdk_json(set_keys(data, keys))
-    print(f"Removed: BedrockAPIKey-{args.team}-{args.purpose}")
-    print(f"Run 'cdk deploy' to delete the IAM user from CloudFormation.")
+    # Delete inline policies
+    inline = iam.list_user_policies(UserName=user_name)
+    for policy_name in inline.get("PolicyNames", []):
+        iam.delete_user_policy(UserName=user_name, PolicyName=policy_name)
+
+    # Delete access keys
+    keys = iam.list_access_keys(UserName=user_name)
+    for key in keys.get("AccessKeyMetadata", []):
+        iam.delete_access_key(UserName=user_name, AccessKeyId=key["AccessKeyId"])
+
+    # Delete service-specific credentials
+    creds = iam.list_service_specific_credentials(UserName=user_name)
+    for cred in creds.get("ServiceSpecificCredentials", []):
+        iam.delete_service_specific_credential(
+            UserName=user_name,
+            ServiceSpecificCredentialId=cred["ServiceSpecificCredentialId"],
+        )
+
+    iam.delete_user(UserName=user_name)
+    print(f"Removed: {user_name}")
+    print("Note: Budget records in DynamoDB will remain for audit purposes.")
 
 
-def list_keys(args: argparse.Namespace) -> None:
-    data = load_cdk_json()
-    keys = get_keys(data)
+def list_keys(_args: argparse.Namespace) -> None:
+    iam = get_iam_client()
 
-    if not keys:
-        print("No API keys configured.")
+    paginator = iam.get_paginator("list_users")
+    users = []
+    for page in paginator.paginate():
+        for user in page["Users"]:
+            if user["UserName"].startswith(USER_PREFIX):
+                users.append(user)
+
+    if not users:
+        print("No BedrockAPIKey-* IAM users found.")
         return
 
-    print(f"{'IAM User Name':<45} {'Team':<15} {'Purpose':<20} {'Tier':<8}")
-    print("-" * 88)
-    for entry in keys:
-        team = entry["team"]
-        purpose = entry["purpose"]
-        tier = entry.get("budget_tier", "low")
-        print(f"BedrockAPIKey-{team}-{purpose:<26} {team:<15} {purpose:<20} {tier:<8}")
+    print(f"{'IAM User Name':<45} {'Team':<15} {'Purpose':<20} {'Tier':<8} {'Source':<8}")
+    print("-" * 96)
+
+    for user in sorted(users, key=lambda u: u["UserName"]):
+        tags_resp = iam.list_user_tags(UserName=user["UserName"])
+        tags = {t["Key"]: t["Value"] for t in tags_resp.get("Tags", [])}
+
+        team = tags.get("BedrockBudgeteer:Team", "-")
+        purpose = tags.get("BedrockBudgeteer:Purpose", "-")
+        tier = tags.get("BedrockBudgeteer:BudgetTier", "-")
+        source = tags.get("BedrockBudgeteer:Provisioned", "unknown")
+
+        print(f"{user['UserName']:<45} {team:<15} {purpose:<20} {tier:<8} {source:<8}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Manage Bedrock API key provisioning (updates cdk.json)",
+        description="Manage Bedrock API key IAM users (creates/removes directly in AWS)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="After changes, run 'cdk deploy' to apply.",
+        epilog="Keys are provisioned immediately — no CDK deploy needed.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # add
-    add_parser = subparsers.add_parser("add", help="Add a new API key")
+    add_parser = subparsers.add_parser("add", help="Create a new Bedrock API key user")
     add_parser.add_argument("--team", required=True, help="Team name (e.g., platform, ml-ops)")
     add_parser.add_argument("--purpose", required=True, help="Purpose/use case (e.g., chatbot-prod)")
     add_parser.add_argument("--budget-tier", default="low", choices=VALID_TIERS,
                             help="Budget tier: low=$1, medium=$5, high=$25 (default: low)")
     add_parser.set_defaults(func=add_key)
 
-    # remove
-    rm_parser = subparsers.add_parser("remove", help="Remove an API key")
+    rm_parser = subparsers.add_parser("remove", help="Remove a Bedrock API key user")
     rm_parser.add_argument("--team", required=True, help="Team name")
     rm_parser.add_argument("--purpose", required=True, help="Purpose/use case")
     rm_parser.set_defaults(func=remove_key)
 
-    # list
-    list_parser = subparsers.add_parser("list", help="List all configured API keys")
+    list_parser = subparsers.add_parser("list", help="List all BedrockAPIKey-* IAM users")
     list_parser.set_defaults(func=list_keys)
 
     args = parser.parse_args()

@@ -27,13 +27,6 @@
         "data": 2555
       }
     },
-    "bedrock-budgeteer:api-keys": [
-      {
-        "team": "platform",
-        "purpose": "chatbot-prod",
-        "budget_tier": "medium"
-      }
-    ],
     "bedrock-budgeteer:feature-flags": {
       "enable-encryption": true,
       "enable-point-in-time-recovery": true,

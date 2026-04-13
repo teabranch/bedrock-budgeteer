@@ -131,6 +131,76 @@ class TestCdkProvisionedKeyDetected(unittest.TestCase):
         mock_iam.tag_user.assert_not_called()
 
 
+class TestScriptProvisionedKeyDetected(unittest.TestCase):
+    """When IAM tags include Provisioned=script the key should be treated as provisioned (not rogue)."""
+
+    @patch.dict(os.environ, {
+        'ENVIRONMENT': 'test',
+        'USER_BUDGETS_TABLE': 'user-budgets',
+        'BUDGET_ALERTS_SNS_TOPIC_ARN': 'arn:aws:sns:us-east-1:123456789012:alerts',
+    })
+    @patch('boto3.client')
+    @patch('boto3.resource')
+    def test_script_provisioned_key_detected(self, mock_resource, mock_client):
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {}
+        mock_resource.return_value.Table.return_value = mock_table
+
+        mock_iam = MagicMock()
+        mock_iam.list_user_tags.return_value = {
+            'Tags': [
+                {'Key': 'BedrockBudgeteer:Provisioned', 'Value': 'script'},
+                {'Key': 'BedrockBudgeteer:Team', 'Value': 'data-eng'},
+                {'Key': 'BedrockBudgeteer:Purpose', 'Value': 'etl-pipeline'},
+                {'Key': 'BedrockBudgeteer:BudgetTier', 'Value': 'high'},
+            ]
+        }
+
+        mock_ssm = MagicMock()
+        mock_ssm.get_parameter.return_value = {'Parameter': {'Value': '25'}}
+
+        mock_cw = MagicMock()
+        mock_events = MagicMock()
+        mock_sns = MagicMock()
+
+        def _client_factory(service, **kwargs):
+            return {
+                'iam': mock_iam, 'ssm': mock_ssm, 'cloudwatch': mock_cw,
+                'events': mock_events, 'sns': mock_sns,
+            }.get(service, MagicMock())
+
+        mock_client.side_effect = _client_factory
+
+        ns = _build_exec_env()
+        ns['iam_client'] = mock_iam
+        ns['sns_client'] = mock_sns
+        ns['dynamodb'] = mock_resource.return_value
+        ns['ssm'] = mock_ssm
+        ns['cloudwatch'] = mock_cw
+        ns['events'] = mock_events
+
+        event = _make_event('CreateUser', 'BedrockAPIKey-data-eng-etl-pipeline')
+        result = ns['lambda_handler'](event, MagicMock())
+
+        self.assertEqual(result['statusCode'], 200)
+
+        put_calls = mock_table.put_item.call_args_list
+        budget_items = [
+            c for c in put_calls
+            if c.kwargs.get('Item', {}).get('principal_id') == 'BedrockAPIKey-data-eng-etl-pipeline'
+            or (c.args and c.args[0].get('Item', {}).get('principal_id') == 'BedrockAPIKey-data-eng-etl-pipeline')
+        ]
+        self.assertEqual(len(budget_items), 1)
+
+        item = budget_items[0].kwargs.get('Item') or budget_items[0][1]['Item']
+        self.assertTrue(item['has_carveout'])
+        self.assertEqual(item['provisioned_by'], 'script')
+        self.assertEqual(item['team'], 'data-eng')
+
+        # Not rogue — tag_user should NOT have been called
+        mock_iam.tag_user.assert_not_called()
+
+
 class TestRogueKeyDetected(unittest.TestCase):
     """When IAM tags are missing, the key should be tagged and an SNS alert published."""
 

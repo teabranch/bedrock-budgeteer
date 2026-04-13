@@ -509,51 +509,37 @@ Retrieve the current budget status for an agent or the global budget.
 }
 ```
 
-### KeyProvisioningConstruct
+### manage_keys.py CLI
 
-Provisions tagged IAM users for Bedrock API keys. Enabled via the `enable_key_provisioning` feature flag in `cdk.json`.
+Standalone script that provisions and manages Bedrock API key IAM users directly via AWS APIs. No CDK deploy needed per key.
 
-**Constructor:**
-```python
-KeyProvisioningConstruct(
-    scope: Construct,
-    construct_id: str,
-    team: str,
-    purpose: str,
-    budget_tier: str,  # "low", "medium", or "high"
-    environment_name: str,
-    kms_key: Optional[kms.Key] = None,
-    **kwargs
-)
+**Prerequisites:**
+- AWS credentials configured (`aws configure` or environment variables)
+- `enable_key_provisioning: true` in `cdk.json` and deployed (for runtime support: SSM params, IAM permissions, SNS wiring)
+- Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the AWS Billing console for Cost Explorer grouping
+
+**Commands:**
+```bash
+# Create a tagged IAM user with Bedrock access
+python manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
+
+# List all BedrockAPIKey-* users with their tags
+python manage_keys.py list
+
+# Remove an IAM user (detaches policies, deletes access keys, deletes user)
+python manage_keys.py remove --team platform --purpose chatbot-prod
 ```
 
-**Parameters:**
-- `team`: Team or department name (used in tags and naming)
-- `purpose`: Intended use case (used in tags and naming)
-- `budget_tier`: Budget tier — `low` ($1), `medium` ($5), or `high` ($25). Raises `ValueError` if invalid.
-- `environment_name`: Environment name for resource naming
+**Parameters (add):**
+- `--team` (required): Team name (e.g., `platform`, `ml-ops`)
+- `--purpose` (required): Use case (e.g., `chatbot-prod`, `batch-inference`)
+- `--budget-tier` (optional): `low` ($1), `medium` ($5), or `high` ($25). Default: `low`
 
-**Resources Created:**
-- **IAM User**: Named `BedrockAPIKey-{team}-{purpose}` with `AmazonBedrockLimitedAccess` managed policy
-- **Tags Applied** (7): `BedrockBudgeteer:Team`, `BedrockBudgeteer:Purpose`, `BedrockBudgeteer:BudgetTier`, `BedrockBudgeteer:Provisioned` (=`cdk`), `BedrockBudgeteer:ManagedBy`, `CostAllocation:Team`, `CostAllocation:Purpose`
+**IAM User Created:**
+- Named `BedrockAPIKey-{team}-{purpose}` with `AmazonBedrockLimitedAccess` managed policy
+- **Tags Applied** (7): `BedrockBudgeteer:Team`, `BedrockBudgeteer:Purpose`, `BedrockBudgeteer:BudgetTier`, `BedrockBudgeteer:Provisioned` (=`script`), `BedrockBudgeteer:ManagedBy`, `CostAllocation:Team`, `CostAllocation:Purpose`
 
-**Properties:**
-- `user_name: str` — The IAM user name
-- `user_arn: str` — The IAM user ARN
-
-**Configuration (cdk.json):**
-
-Keys are declared in `cdk.json` under `bedrock-budgeteer:api-keys` — no code editing required:
-```json
-"bedrock-budgeteer:api-keys": [
-  {"team": "platform", "purpose": "chatbot-prod", "budget_tier": "medium"},
-  {"team": "ml-ops", "purpose": "batch-inference", "budget_tier": "high"}
-]
-```
-
-The stack automatically creates a `KeyProvisioningConstruct` for each entry when `enable_key_provisioning` is enabled.
-
-**Prerequisite**: Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the AWS Billing console for Cost Explorer grouping.
+**How it works:** The script creates the IAM user directly. The existing CloudTrail → EventBridge → `user_setup` Lambda pipeline detects the new user, reads its tags, and automatically registers the budget based on the tier.
 
 ---
 

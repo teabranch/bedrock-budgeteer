@@ -119,9 +119,9 @@ def _check_provisioning_status(principal_id, event_detail):
             tags = {t['Key']: t['Value'] for t in response.get('Tags', [])}
 
             provisioned_tag = tags.get('BedrockBudgeteer:Provisioned')
-            if provisioned_tag == 'cdk':
+            if provisioned_tag in ('cdk', 'script'):
                 return {
-                    'provisioned_by': 'cdk',
+                    'provisioned_by': provisioned_tag,
                     'team': tags.get('BedrockBudgeteer:Team', 'unknown'),
                     'purpose': tags.get('BedrockBudgeteer:Purpose', 'unknown'),
                     'budget_tier': tags.get('BedrockBudgeteer:BudgetTier', 'standard'),
@@ -249,7 +249,7 @@ def _register_key_budget(principal_id, provisioning_info, table):
     purpose = provisioning_info.get('purpose', 'unassigned')
     budget_tier = provisioning_info.get('budget_tier', 'low')
 
-    if provisioned_by == 'cdk':
+    if provisioned_by in ('cdk', 'script'):
         tier_budget = ConfigurationManager.get_parameter(
             f'/bedrock-budgeteer/global/budget_tier_{budget_tier}_usd', 50
         )

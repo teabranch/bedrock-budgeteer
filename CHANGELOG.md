@@ -5,8 +5,8 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 ## [Unreleased]
 
 ### Added
-- KeyProvisioningConstruct: CDK-based Bedrock API key provisioning with cost allocation tags (team, purpose, budget tier)
-- Rogue key detection: auto-tags keys created outside CDK, sends SNS alerts, publishes RogueKeyDetected metric
+- `manage_keys.py` CLI: standalone script to provision tagged Bedrock API key IAM users directly via AWS APIs (no CDK deploy needed)
+- Rogue key detection: auto-tags keys created outside `manage_keys.py`, sends SNS alerts, publishes RogueKeyDetected metric
 - Pool-based budget model for API keys: global pool ($500 default) + per-key carve-outs by tier (low=$1, medium=$5, high=$25), global cap guardrail ($1000)
 - CostAllocationReportingConstruct: daily Cost Explorer sync and cost reconciliation with drift alerting
 - Cost Allocation CloudWatch dashboard with team/purpose/tier breakdowns, pool utilization, rogue key count, reconciliation drift
@@ -28,7 +28,7 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 
 ### Changed
 - Budget monitor rewritten with 3-tier enforcement: per-key carve-out → pool exhaustion → global cap
-- user_setup Lambda rewritten with tag checking (CDK vs rogue), pool registration, tier-based budgets
+- user_setup Lambda rewritten with tag checking (script/CDK vs rogue), pool registration, tier-based budgets
 - usage_calculator enriched with team/purpose tracking in usage records and bounded metadata cache (500 entries, 5-min TTL)
 - Automatic restoration flow: triggered by refresh period per API key (no manual approval)
 - Simplified workflows: removed emergency override checks from suspension and restoration

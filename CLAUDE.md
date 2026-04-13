@@ -53,8 +53,9 @@ cdk destroy                                        # Tear down stack
 8. **MonitoringConstruct** — CloudWatch dashboards, alarms, SNS topics (high_severity, operational_alerts, budget_alerts), multi-channel notifications
 9. **WorkflowOrchestrationConstruct** — Step Functions state machines for suspension and restoration workflows
 10. **AgentCoreConstruct** — DynamoDB table, Lambda functions (agentcore_setup, agentcore_budget_monitor, agentcore_budget_manager with Function URL, agentcore_iam_utilities), EventBridge rules, Step Functions for AgentCore runtime suspension/restoration workflows
-11. **KeyProvisioningConstruct** — Creates tagged IAM users (`BedrockAPIKey-{team}-{purpose}`) with cost allocation tags and budget tier metadata. Driven by `bedrock-budgeteer:api-keys` list in `cdk.json`. Feature-flagged via `enable_key_provisioning`.
-12. **CostAllocationReportingConstruct** — Daily Cost Explorer sync Lambda and cost reconciliation Lambda with CloudWatch dashboards. Feature-flagged via `enable_cost_allocation_reporting`.
+11. **CostAllocationReportingConstruct** — Daily Cost Explorer sync Lambda and cost reconciliation Lambda with CloudWatch dashboards. Feature-flagged via `enable_cost_allocation_reporting`.
+
+**External tooling**: `manage_keys.py` — standalone CLI that provisions tagged IAM users (`BedrockAPIKey-{team}-{purpose}`) directly via AWS APIs. No CDK deploy needed.
 
 ### Data Flow
 
@@ -74,7 +75,7 @@ AgentCore runtime lifecycle event → EventBridge → agentcore_setup → Dynamo
 Agent Bedrock API call → usage_calculator → role ARN match via GSI → agentcore-budgets table
 agentcore_budget_monitor (5-min schedule) → suspension/restoration Step Functions
 
-CDK deploy → KeyProvisioningConstruct → IAM user + tags → CloudTrail → user_setup
+manage_keys.py add → IAM user + tags → CloudTrail → user_setup (budget registration)
 IAM console key creation → CloudTrail → user_setup → auto-tag rogue key + SNS alert
 Budget Monitor → 3-tier check: per-key → pool (GLOBAL_API_KEY_POOL) → global cap
 Cost Explorer (daily) → cost_allocation_sync → CloudWatch metrics → Cost Allocation dashboard
@@ -88,9 +89,10 @@ Cost Explorer (daily) → cost_allocation_sync → CloudWatch metrics → Cost A
 - **Shared utilities** (`constructs/shared/`) are concatenated into each function's inline `Code.from_inline()` source string (not Lambda Layers): `configuration_manager`, `dynamodb_helpers`, `metrics_publisher`, `lambda_utilities`, `event_publisher`, `pricing_calculator`.
 - **Optional KMS encryption** — all constructs accept an optional `kms_key` parameter; pass the key through the stack constructor or CDK app configuration.
 - **AgentCore suspension = snapshot + strip + deny-all** — unlike API key suspension (managed policy detach), AgentCore runtime suspension snapshots all role policies, strips them, attaches a deny-all inline policy, and tags the role. Restoration reverses the process: delete deny-all, reattach managed policies, recreate inline policies, untag, and reset budget.
-- **Feature flag gating** — `enable_agentcore_budgeting`, `enable_key_provisioning`, and `enable_cost_allocation_reporting` in `cdk.json` feature flags control whether their respective constructs are instantiated.
+- **Feature flag gating** — `enable_agentcore_budgeting`, `enable_key_provisioning`, and `enable_cost_allocation_reporting` in `cdk.json` feature flags control whether their respective constructs and runtime support are enabled.
+- **Key provisioning is external** — `manage_keys.py` creates tagged IAM users directly via AWS APIs (no CDK deploy needed). The `enable_key_provisioning` flag gates the runtime support (SSM params, IAM permissions, SNS wiring) that the `user_setup` Lambda needs for tag detection and rogue key handling.
 - **Pool-based API key budgets** — Global pool ($500 default) + per-key carve-outs by budget tier (low=$1, medium=$5, high=$25). Unbudgeted (rogue) keys draw from the pool. Global cap ($1000) acts as a guardrail across all keys. Mirrors the AgentCore budget model.
-- **Rogue key auto-tagging** — Keys created outside the CDK provisioning construct are detected via CloudTrail, auto-tagged with default metadata, and trigger SNS alerts. They draw from the global pool with no carve-out.
+- **Rogue key auto-tagging** — Keys created outside `manage_keys.py` (e.g., via IAM console) are detected via CloudTrail, auto-tagged with default metadata, and trigger SNS alerts. They draw from the global pool with no carve-out.
 - **Cost allocation tags** — `CostAllocation:Team` and `CostAllocation:Purpose` tags on IAM users enable AWS Cost Explorer grouping. `BedrockBudgeteer:*` tags are used for internal tracking.
 - **Emergency controls were removed** — no maintenance mode or emergency stop (see CHANGELOG.md).
 
