@@ -27,9 +27,13 @@ class ConfigurationConstruct(Construct):
         self._create_monitoring_config()  # Log retention and monitoring settings
 
         # Add AgentCore config if feature is enabled
-        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags")
-        if feature_flags and feature_flags.get("enable_agentcore_budgeting"):
+        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags") or {}
+        if feature_flags.get("enable_agentcore_budgeting"):
             self._create_agentcore_config()
+
+        # Add Key Provisioning config if feature is enabled
+        if feature_flags.get("enable_key_provisioning"):
+            self._create_key_provisioning_config()
 
         # Tags are applied by TaggingFramework aspects
     
@@ -218,6 +222,39 @@ class ConfigurationConstruct(Construct):
         for key, config in agentcore_config.items():
             self.parameters[f"agentcore_{key}"] = self._create_global_parameter(
                 category="agentcore",
+                key=key,
+                value=config["value"],
+                description=config["description"]
+            )
+
+    def _create_key_provisioning_config(self) -> None:
+        """Create Key Provisioning budget configuration parameters"""
+        key_provisioning_config = {
+            "api_key_pool_budget_usd": {
+                "value": "500",
+                "description": "Global budget pool for all Bedrock API keys (USD)"
+            },
+            "budget_tier_low_usd": {
+                "value": "1",
+                "description": "Budget limit for low-tier API keys (USD)"
+            },
+            "budget_tier_medium_usd": {
+                "value": "5",
+                "description": "Budget limit for medium-tier API keys (USD)"
+            },
+            "budget_tier_high_usd": {
+                "value": "25",
+                "description": "Budget limit for high-tier API keys (USD)"
+            },
+            "api_key_global_cap_usd": {
+                "value": "1000",
+                "description": "Global cap guardrail across all API keys (USD)"
+            }
+        }
+
+        for key, config in key_provisioning_config.items():
+            self.parameters[f"key_provisioning_{key}"] = self._create_global_parameter(
+                category="global",
                 key=key,
                 value=config["value"],
                 description=config["description"]

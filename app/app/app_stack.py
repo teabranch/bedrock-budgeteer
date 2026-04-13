@@ -22,6 +22,8 @@ from .constructs.log_storage import LogStorageConstruct
 from .constructs.core_processing import CoreProcessingConstruct
 from .constructs.workflow_orchestration import WorkflowOrchestrationConstruct
 from .constructs.agentcore import AgentCoreConstruct
+from .constructs.key_provisioning import KeyProvisioningConstruct
+from .constructs.cost_allocation_reporting import CostAllocationReportingConstruct
 # Operational controls removed per changelog - see 2025-09-02 updates
 
 
@@ -133,6 +135,49 @@ class BedrockBudgeteerStack(Stack):
             self.agentcore.agentcore_budgets_table.grant_read_write_data(
                 self.security.roles["lambda_execution"]
             )
+
+        # Deploy Key Provisioning (feature-flagged)
+        if feature_flags.get("enable_key_provisioning"):
+            self.security.add_key_provisioning_iam_permissions()
+
+            # Pass SNS topic ARN to user_setup for rogue key alerts
+            budget_alerts_topic = self.monitoring.topics.get("budget_alerts")
+            if budget_alerts_topic:
+                self.core_processing.functions["user_setup"].add_environment(
+                    "BUDGET_ALERTS_SNS_TOPIC_ARN",
+                    budget_alerts_topic.topic_arn
+                )
+
+            # Provision API keys from cdk.json config (no code editing needed)
+            api_keys_config = self.node.try_get_context("bedrock-budgeteer:api-keys") or []
+            for key_config in api_keys_config:
+                team = key_config["team"]
+                purpose = key_config["purpose"]
+                budget_tier = key_config.get("budget_tier", "low")
+                KeyProvisioningConstruct(
+                    self, f"ApiKey-{team}-{purpose}",
+                    team=team,
+                    purpose=purpose,
+                    budget_tier=budget_tier,
+                    environment_name=environment_name,
+                    kms_key=self.kms_key,
+                )
+
+        # Deploy Cost Allocation Reporting (feature-flagged)
+        if feature_flags.get("enable_cost_allocation_reporting"):
+            self.security.add_cost_explorer_permissions()
+
+            self.cost_allocation_reporting = CostAllocationReportingConstruct(
+                self, "CostAllocationReporting",
+                environment_name=environment_name,
+                lambda_execution_role=self.security.roles["lambda_execution"],
+                usage_tracking_table=self.data_storage.tables["usage_tracking"],
+                sns_topics=self.monitoring.topics,
+                kms_key=self.kms_key,
+            )
+
+            # Create cost allocation dashboard
+            self.monitoring.create_cost_allocation_dashboard()
 
         # Add additional permissions to security roles
         self._configure_security_permissions()

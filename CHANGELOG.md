@@ -5,6 +5,15 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 ## [Unreleased]
 
 ### Added
+- KeyProvisioningConstruct: CDK-based Bedrock API key provisioning with cost allocation tags (team, purpose, budget tier)
+- Rogue key detection: auto-tags keys created outside CDK, sends SNS alerts, publishes RogueKeyDetected metric
+- Pool-based budget model for API keys: global pool ($500 default) + per-key carve-outs by tier (low=$1, medium=$5, high=$25), global cap guardrail ($1000)
+- CostAllocationReportingConstruct: daily Cost Explorer sync and cost reconciliation with drift alerting
+- Cost Allocation CloudWatch dashboard with team/purpose/tier breakdowns, pool utilization, rogue key count, reconciliation drift
+- 5 new SSM parameters: api_key_pool_budget_usd, budget_tier_low/medium/high_usd, api_key_global_cap_usd
+- `suspension_reason` passthrough in suspension workflow (per_key, pool_exhausted, global_cap)
+- TagUser/UntagUser EventBridge rules for tag tampering detection on BedrockAPIKey users
+- 32 new unit tests for key provisioning, rogue detection, pool budgets, cost allocation reporting
 - AWS API Validation Audit: gap analysis of 22 discrepancies across CloudTrail events, pricing, IAM, and cost calculation
 - CloudTrail advanced event selectors for Bedrock data events (agents, flows, knowledge bases, guardrails)
 - EventBridge rules for new Bedrock operations: InvokeModelWithBidirectionalStream, InvokeInlineAgent, RetrieveAndGenerateStream, StartAsyncInvoke
@@ -18,6 +27,9 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 - CloudWatch alarms for Bedrock throttles, server errors, and p99 latency
 
 ### Changed
+- Budget monitor rewritten with 3-tier enforcement: per-key carve-out → pool exhaustion → global cap
+- user_setup Lambda rewritten with tag checking (CDK vs rogue), pool registration, tier-based budgets
+- usage_calculator enriched with team/purpose tracking in usage records and bounded metadata cache (500 entries, 5-min TTL)
 - Automatic restoration flow: triggered by refresh period per API key (no manual approval)
 - Simplified workflows: removed emergency override checks from suspension and restoration
 - Budget monitor frequency reduced from 15 to 5 minutes

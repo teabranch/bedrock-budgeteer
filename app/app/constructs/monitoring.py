@@ -1069,6 +1069,188 @@ class MonitoringConstruct(Construct):
             suspension_widget, cost_widget
         )
     
+    def create_cost_allocation_dashboard(self) -> None:
+        """Create dashboard section for Cost Allocation & Key Management metrics"""
+        cost_allocation_namespace = "BedrockBudgeteer/CostAllocation"
+
+        self.cost_allocation_dashboard = cloudwatch.Dashboard(
+            self, "CostAllocationDashboard",
+            dashboard_name=f"bedrock-budgeteer-{self.environment_name}-cost-allocation"
+        )
+
+        # Header
+        self.cost_allocation_dashboard.add_widgets(
+            cloudwatch.TextWidget(
+                markdown=f"# Cost Allocation & Key Management - {self.environment_name.upper()}\n\nAWS Cost Explorer data grouped by cost allocation tags. Updated daily.",
+                width=24,
+                height=2
+            )
+        )
+
+        # Cost by Team widget
+        cost_by_team_widget = cloudwatch.GraphWidget(
+            title="Cost by Team (Daily)",
+            left=[
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostByTeam",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="Team Cost"
+                )
+            ],
+            width=12,
+            height=6
+        )
+
+        # Cost by Purpose widget
+        cost_by_purpose_widget = cloudwatch.GraphWidget(
+            title="Cost by Purpose (Daily)",
+            left=[
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostByPurpose",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="Purpose Cost"
+                )
+            ],
+            width=12,
+            height=6
+        )
+
+        self.cost_allocation_dashboard.add_widgets(
+            cost_by_team_widget, cost_by_purpose_widget
+        )
+
+        # Budget Tier Utilization widget
+        tier_utilization_widget = cloudwatch.GraphWidget(
+            title="Budget Tier Utilization (Daily)",
+            left=[
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostByTier",
+                    dimensions_map={"Environment": self.environment_name, "BudgetTier": "low"},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="Low Tier"
+                ),
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostByTier",
+                    dimensions_map={"Environment": self.environment_name, "BudgetTier": "medium"},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="Medium Tier"
+                ),
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostByTier",
+                    dimensions_map={"Environment": self.environment_name, "BudgetTier": "high"},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="High Tier"
+                )
+            ],
+            width=12,
+            height=6,
+            stacked=True
+        )
+
+        # Total Bedrock Cost widget
+        total_cost_widget = cloudwatch.GraphWidget(
+            title="Total Bedrock Cost (Daily)",
+            left=[
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="TotalBedrockCost",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.days(1),
+                    statistic="Sum",
+                    label="Total Cost (USD)"
+                )
+            ],
+            width=12,
+            height=6
+        )
+
+        self.cost_allocation_dashboard.add_widgets(
+            tier_utilization_widget, total_cost_widget
+        )
+
+        # Pool and Global Cap utilization
+        pool_widget = cloudwatch.SingleValueWidget(
+            title="API Key Pool Budget",
+            metrics=[
+                cloudwatch.Metric(
+                    namespace=self.business_metrics_namespace,
+                    metric_name="ApiKeyPoolSpentUsd",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.minutes(5),
+                    statistic="Maximum",
+                    label="Pool Spent (USD)"
+                )
+            ],
+            width=6,
+            height=4
+        )
+
+        global_cap_widget = cloudwatch.SingleValueWidget(
+            title="Global Cap Utilization",
+            metrics=[
+                cloudwatch.Metric(
+                    namespace=self.business_metrics_namespace,
+                    metric_name="ApiKeyGlobalCapSpentUsd",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.minutes(5),
+                    statistic="Maximum",
+                    label="Total Spent (USD)"
+                )
+            ],
+            width=6,
+            height=4
+        )
+
+        # Rogue key metrics
+        rogue_count_widget = cloudwatch.SingleValueWidget(
+            title="Rogue Keys Detected",
+            metrics=[
+                cloudwatch.Metric(
+                    namespace=self.business_metrics_namespace,
+                    metric_name="RogueKeyDetected",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.days(7),
+                    statistic="Sum",
+                    label="Rogue Keys (7d)"
+                )
+            ],
+            width=6,
+            height=4
+        )
+
+        # Cost Reconciliation Drift
+        drift_widget = cloudwatch.GraphWidget(
+            title="Cost Reconciliation Drift (%)",
+            left=[
+                cloudwatch.Metric(
+                    namespace=cost_allocation_namespace,
+                    metric_name="CostReconciliationDrift",
+                    dimensions_map={"Environment": self.environment_name},
+                    period=Duration.days(1),
+                    statistic="Maximum",
+                    label="Drift %"
+                )
+            ],
+            width=6,
+            height=4
+        )
+
+        self.cost_allocation_dashboard.add_widgets(
+            pool_widget, global_cap_widget, rogue_count_widget, drift_widget
+        )
+
     def _create_slack_notification_lambda(self, webhook_url: str):
         """Create Lambda function for Slack notifications"""
         from aws_cdk import aws_lambda as lambda_

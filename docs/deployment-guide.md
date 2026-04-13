@@ -405,6 +405,37 @@ The system creates least-privilege roles for:
 - EventBridge service role
 - Kinesis Firehose delivery role
 
+## Feature Flags
+
+Feature flags in `cdk.json` control optional constructs. Set to `true` to enable:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `enable_agentcore_budgeting` | `true` | AgentCore runtime budget monitoring |
+| `enable_key_provisioning` | `true` | CDK-based API key provisioning with tags and pool budgets |
+| `enable_cost_allocation_reporting` | `true` | Daily Cost Explorer sync and reconciliation dashboards |
+
+### Enabling Key Provisioning
+
+1. Set `enable_key_provisioning: true` in `cdk.json` feature flags
+2. Add API keys to the `bedrock-budgeteer:api-keys` list in `cdk.json` (no code changes needed):
+```json
+"bedrock-budgeteer:api-keys": [
+  {"team": "platform", "purpose": "chatbot-prod", "budget_tier": "medium"},
+  {"team": "ml-ops", "purpose": "batch-inference", "budget_tier": "high"}
+]
+```
+   Each entry requires `team` and `purpose` (used in naming: `BedrockAPIKey-{team}-{purpose}`). `budget_tier` defaults to `low` if omitted. Valid tiers: `low` ($1), `medium` ($5), `high` ($25).
+3. Deploy with `cdk deploy`
+4. Keys created outside CDK (via IAM console) will be auto-detected, tagged, and alerted via SNS
+
+### Enabling Cost Allocation Reporting
+
+1. Set `enable_cost_allocation_reporting: true` in `cdk.json` feature flags
+2. **Prerequisite**: Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the [AWS Billing console](https://console.aws.amazon.com/billing/home#/tags) — tags must be activated before Cost Explorer can group by them (activation takes up to 24 hours)
+3. Deploy with `cdk deploy`
+4. Cost data appears in the "Cost Allocation" CloudWatch dashboard after the first daily sync (06:00 UTC)
+
 ## Troubleshooting
 
 ### Common Deployment Issues

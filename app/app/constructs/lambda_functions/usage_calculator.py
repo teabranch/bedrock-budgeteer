@@ -566,10 +566,18 @@ def process_bedrock_log(log_data):
                         logger.info(f"Attributed ${cost} to AgentCore runtime {runtime['runtime_id']}")
                         return True  # Cost attributed to AgentCore runtime; skip standard budget update
 
+        # Look up team/purpose from budget record for usage tracking enrichment
+        team_purpose = _get_key_metadata(principal_id) if principal_id.startswith('BedrockAPIKey-') else {}
+
         record_usage_tracking(principal_id, model_id, cost, total_input, output_tokens,
                             usage_type, image_count=image_count, request_metadata=request_metadata,
-                            original_model_id=original_model_id)
+                            original_model_id=original_model_id, team=team_purpose.get('team'),
+                            purpose=team_purpose.get('purpose'))
         update_user_budget(principal_id, model_id, cost, total_input, output_tokens)
+
+        # Update pool spent if this is an unbudgeted API key
+        if principal_id.startswith('BedrockAPIKey-') and cost and cost > 0:
+            _update_api_key_pool_if_needed(principal_id, cost, team_purpose)
         
         event_detail = {
             'principal_id': principal_id, 'model_id': model_id,
@@ -605,7 +613,8 @@ def process_bedrock_log(log_data):
 
 
 def record_usage_tracking(principal_id, model_id, cost, input_tokens, output_tokens,
-                         usage_type, image_count=0, request_metadata=None, original_model_id=None):
+                         usage_type, image_count=0, request_metadata=None, original_model_id=None,
+                         team=None, purpose=None):
     """Record usage data in the usage tracking table"""
     try:
         usage_tracking_table = dynamodb.Table(os.environ['USAGE_TRACKING_TABLE'])
@@ -631,7 +640,11 @@ def record_usage_tracking(principal_id, model_id, cost, input_tokens, output_tok
             usage_record['request_metadata'] = request_metadata
         if original_model_id and original_model_id != model_id:
             usage_record['original_model_id'] = original_model_id
-        
+        if team:
+            usage_record['team'] = team
+        if purpose:
+            usage_record['purpose'] = purpose
+
         usage_tracking_table.put_item(Item=usage_record)
         logger.info(f"Recorded usage for {principal_id}: {usage_type}, ${cost:.6f}")
         
@@ -755,4 +768,61 @@ def create_basic_budget_record(principal_id, initial_cost, model_id, current_tim
     except Exception as e:
         logger.error(f"Error creating budget record for {principal_id}: {e}")
         raise
+
+
+# Module-level cache for key metadata (survives across Lambda invocations)
+# Bounded to 500 entries with time-based expiry (5 min) to prevent memory leaks
+# and stale data from persisting across budget tier changes
+_key_metadata_cache = {}
+_KEY_METADATA_CACHE_MAX_SIZE = 500
+_KEY_METADATA_CACHE_TTL_SECONDS = 300
+
+def _get_key_metadata(principal_id):
+    """Get team/purpose/has_carveout from user_budgets record (cached with TTL)"""
+    import time as _time
+    cached = _key_metadata_cache.get(principal_id)
+    if cached and (_time.time() - cached.get('_cached_at', 0)) < _KEY_METADATA_CACHE_TTL_SECONDS:
+        return cached
+
+    try:
+        user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
+        response = user_budgets_table.get_item(
+            Key={'principal_id': principal_id},
+            ProjectionExpression='team, purpose, has_carveout'
+        )
+        item = response.get('Item', {})
+        import time as _time
+        metadata = {
+            'team': item.get('team'),
+            'purpose': item.get('purpose'),
+            'has_carveout': item.get('has_carveout', False),
+            '_cached_at': _time.time()
+        }
+        # Evict oldest entries if cache is full
+        if len(_key_metadata_cache) >= _KEY_METADATA_CACHE_MAX_SIZE:
+            _key_metadata_cache.clear()
+        _key_metadata_cache[principal_id] = metadata
+        return metadata
+    except Exception as e:
+        logger.warning(f"Could not fetch metadata for {principal_id}: {e}")
+        return {}
+
+
+def _update_api_key_pool_if_needed(principal_id, cost, metadata):
+    """If this principal is an unbudgeted API key, also update the global pool spent"""
+    if metadata.get('has_carveout', False):
+        return  # Budgeted keys don't affect the pool
+
+    try:
+        user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
+        user_budgets_table.update_item(
+            Key={'principal_id': 'GLOBAL_API_KEY_POOL'},
+            UpdateExpression='SET spent_usd = if_not_exists(spent_usd, :zero) + :cost',
+            ExpressionAttributeValues={
+                ':cost': Decimal(str(cost)),
+                ':zero': Decimal('0')
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Could not update API key pool for {principal_id}: {e}")
 '''

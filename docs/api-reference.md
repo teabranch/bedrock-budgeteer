@@ -509,6 +509,89 @@ Retrieve the current budget status for an agent or the global budget.
 }
 ```
 
+### KeyProvisioningConstruct
+
+Provisions tagged IAM users for Bedrock API keys. Enabled via the `enable_key_provisioning` feature flag in `cdk.json`.
+
+**Constructor:**
+```python
+KeyProvisioningConstruct(
+    scope: Construct,
+    construct_id: str,
+    team: str,
+    purpose: str,
+    budget_tier: str,  # "low", "medium", or "high"
+    environment_name: str,
+    kms_key: Optional[kms.Key] = None,
+    **kwargs
+)
+```
+
+**Parameters:**
+- `team`: Team or department name (used in tags and naming)
+- `purpose`: Intended use case (used in tags and naming)
+- `budget_tier`: Budget tier — `low` ($1), `medium` ($5), or `high` ($25). Raises `ValueError` if invalid.
+- `environment_name`: Environment name for resource naming
+
+**Resources Created:**
+- **IAM User**: Named `BedrockAPIKey-{team}-{purpose}` with `AmazonBedrockLimitedAccess` managed policy
+- **Tags Applied** (7): `BedrockBudgeteer:Team`, `BedrockBudgeteer:Purpose`, `BedrockBudgeteer:BudgetTier`, `BedrockBudgeteer:Provisioned` (=`cdk`), `BedrockBudgeteer:ManagedBy`, `CostAllocation:Team`, `CostAllocation:Purpose`
+
+**Properties:**
+- `user_name: str` — The IAM user name
+- `user_arn: str` — The IAM user ARN
+
+**Configuration (cdk.json):**
+
+Keys are declared in `cdk.json` under `bedrock-budgeteer:api-keys` — no code editing required:
+```json
+"bedrock-budgeteer:api-keys": [
+  {"team": "platform", "purpose": "chatbot-prod", "budget_tier": "medium"},
+  {"team": "ml-ops", "purpose": "batch-inference", "budget_tier": "high"}
+]
+```
+
+The stack automatically creates a `KeyProvisioningConstruct` for each entry when `enable_key_provisioning` is enabled.
+
+**Prerequisite**: Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the AWS Billing console for Cost Explorer grouping.
+
+---
+
+### CostAllocationReportingConstruct
+
+Daily Cost Explorer sync and reconciliation for Bedrock cost reporting. Enabled via the `enable_cost_allocation_reporting` feature flag in `cdk.json`.
+
+**Constructor:**
+```python
+CostAllocationReportingConstruct(
+    scope: Construct,
+    construct_id: str,
+    environment_name: str,
+    lambda_execution_role: iam.Role,
+    usage_tracking_table: dynamodb.Table,
+    sns_topics: Optional[Dict[str, sns.Topic]] = None,
+    kms_key: Optional[kms.Key] = None,
+    **kwargs
+)
+```
+
+**Resources Created:**
+- **Lambda Functions** (2):
+  - `cost_allocation_sync`: Queries Cost Explorer daily, publishes CloudWatch metrics by team/purpose/tier
+  - `cost_reconciliation`: Compares Cost Explorer totals vs internal `usage_tracking` table, alerts on >10% drift
+- **DLQs** (2): Dead letter queues for each Lambda
+- **EventBridge Schedules** (2): Daily at 06:00 UTC (sync) and 07:00 UTC (reconciliation)
+
+**Lambda Environment Variables:**
+- `ENVIRONMENT`: Environment name
+- `USAGE_TRACKING_TABLE`: DynamoDB table name (reconciliation Lambda only)
+- `OPERATIONAL_ALERTS_SNS_TOPIC_ARN`: SNS topic for drift alerts (reconciliation Lambda only)
+
+**CloudWatch Metrics Published** (namespace: `BedrockBudgeteer/CostAllocation`):
+- `CostByTeam`, `CostByPurpose`, `CostByTier`, `TotalBedrockCost`, `CostReconciliationDrift`
+
+---
+
 ### MonitoringConstruct
 
 Manages CloudWatch resources, dashboards, and alarms.

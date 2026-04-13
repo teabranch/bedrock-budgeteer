@@ -392,6 +392,33 @@ class SecurityConstruct(Construct):
 
         self.roles["lambda_execution"].add_to_policy(agentcore_tag_policy)
 
+    def add_key_provisioning_iam_permissions(self) -> None:
+        """Add IAM permissions for key provisioning: tag reading and rogue key auto-tagging"""
+        key_tag_policy = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "iam:ListUserTags",
+                "iam:TagUser"
+            ],
+            resources=[
+                "arn:aws:iam::*:user/BedrockAPIKey-*"
+            ]
+        )
+
+        self.roles["lambda_execution"].add_to_policy(key_tag_policy)
+
+    def add_cost_explorer_permissions(self) -> None:
+        """Add Cost Explorer permissions for cost allocation reporting"""
+        cost_explorer_policy = iam.PolicyStatement(
+            effect=iam.Effect.ALLOW,
+            actions=[
+                "ce:GetCostAndUsage"
+            ],
+            resources=["*"]  # Cost Explorer requires wildcard
+        )
+
+        self.roles["lambda_execution"].add_to_policy(cost_explorer_policy)
+
     def add_cloudwatch_metrics_permissions(self) -> None:
         """Add CloudWatch custom metrics permissions"""
         cloudwatch_policy = iam.PolicyStatement(

@@ -27,12 +27,21 @@
         "data": 2555
       }
     },
+    "bedrock-budgeteer:api-keys": [
+      {
+        "team": "platform",
+        "purpose": "chatbot-prod",
+        "budget_tier": "medium"
+      }
+    ],
     "bedrock-budgeteer:feature-flags": {
       "enable-encryption": true,
       "enable-point-in-time-recovery": true,
       "enable-multi-az": false,
       "skip-s3-public-access-block": true,
-      "enable_agentcore_budgeting": true
+      "enable_agentcore_budgeting": true,
+      "enable_key_provisioning": true,
+      "enable_cost_allocation_reporting": true
     },
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,

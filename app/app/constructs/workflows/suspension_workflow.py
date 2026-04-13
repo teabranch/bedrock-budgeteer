@@ -54,7 +54,8 @@ class SuspensionWorkflow(WorkflowBase):
                 "action": "apply_restriction",
                 "principal_id.$": "$.principal_id",
                 "account_type.$": "$.account_type",
-                "restriction_level": "full_suspension"
+                "restriction_level": "full_suspension",
+                "suspension_reason.$": "$.suspension_reason"
             },
             "$.suspension_result"
         )
@@ -68,12 +69,15 @@ class SuspensionWorkflow(WorkflowBase):
                     sfn.JsonPath.string_at("$.principal_id")
                 )
             },
-            "SET #status = :status, suspension_timestamp = :timestamp",
+            "SET #status = :status, suspension_timestamp = :timestamp, suspension_reason = :reason",
             {"#status": "status"},
             {
                 ":status": sfn_tasks.DynamoAttributeValue.from_string("suspended"),
                 ":timestamp": sfn_tasks.DynamoAttributeValue.from_string(
                     sfn.JsonPath.string_at("$$.State.EnteredTime")
+                ),
+                ":reason": sfn_tasks.DynamoAttributeValue.from_string(
+                    sfn.JsonPath.string_at("$.suspension_reason")
                 )
             },
             "$.status_update"
