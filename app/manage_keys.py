@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""CLI to provision and manage Bedrock API key IAM users directly via AWS APIs.
+"""CLI to provision and manage Bedrock API keys directly via AWS APIs.
 
 Usage:
     ./manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
+    ./manage_keys.py add --team ml-ops --purpose batch --budget-tier high --credential-age-days 90
     ./manage_keys.py remove --team platform --purpose chatbot-prod
     ./manage_keys.py list
 
-Keys are created immediately in AWS IAM — no CDK deploy needed.
+Creates an IAM user, attaches AmazonBedrockLimitedAccess policy, and generates
+a Bedrock API key (service-specific credential). No CDK deploy needed.
 The existing CloudTrail → EventBridge → user_setup pipeline will automatically
 detect the new user and register its budget based on tags.
 """
 import argparse
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
@@ -20,6 +22,7 @@ from botocore.exceptions import ClientError
 VALID_TIERS = ("low", "medium", "high")
 TIER_BUDGETS = {"low": "$1", "medium": "$5", "high": "$25"}
 BEDROCK_POLICY_ARN = "arn:aws:iam::aws:policy/AmazonBedrockLimitedAccess"
+BEDROCK_SERVICE_NAME = "bedrock.amazonaws.com"
 USER_PREFIX = "BedrockAPIKey-"
 
 
@@ -59,10 +62,27 @@ def add_key(args: argparse.Namespace) -> None:
 
     iam.attach_user_policy(UserName=user_name, PolicyArn=BEDROCK_POLICY_ARN)
 
+    # Create the Bedrock API key (service-specific credential)
+    cred_params = {
+        "UserName": user_name,
+        "ServiceName": BEDROCK_SERVICE_NAME,
+    }
+    if args.credential_age_days:
+        cred_params["CredentialAgeDays"] = args.credential_age_days
+
+    cred_response = iam.create_service_specific_credential(**cred_params)
+    cred = cred_response["ServiceSpecificCredential"]
+
     print(f"Created: {user_name}")
     print(f"  Budget tier: {args.budget_tier} ({TIER_BUDGETS[args.budget_tier]})")
     print(f"  Policy: AmazonBedrockLimitedAccess")
     print(f"  Tags: team={args.team}, purpose={args.purpose}")
+    print()
+    print("Bedrock API Key:")
+    print(f"  API Key Value:   {cred['ServiceApiKeyValue']}")
+    print(f"  Credential ID:   {cred['ServiceSpecificCredentialId']}")
+    print()
+    print("IMPORTANT: Save the API Key Value now — it cannot be retrieved again.")
     print()
     print("The user_setup Lambda will automatically register this key's budget")
     print("when CloudTrail delivers the CreateUser event (typically within minutes).")
@@ -150,6 +170,8 @@ def main() -> None:
     add_parser.add_argument("--purpose", required=True, help="Purpose/use case (e.g., chatbot-prod)")
     add_parser.add_argument("--budget-tier", default="low", choices=VALID_TIERS,
                             help="Budget tier: low=$1, medium=$5, high=$25 (default: low)")
+    add_parser.add_argument("--credential-age-days", type=int, default=None,
+                            help="API key expiration in days (omit for no expiration)")
     add_parser.set_defaults(func=add_key)
 
     rm_parser = subparsers.add_parser("remove", help="Remove a Bedrock API key user")
