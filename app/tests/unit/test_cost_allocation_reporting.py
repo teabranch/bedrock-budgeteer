@@ -23,19 +23,21 @@ class TestCostAllocationConstructExists(unittest.TestCase):
 
 
 class TestCostAllocationFeatureFlag(unittest.TestCase):
-    """Test that cost allocation respects the feature flag"""
+    """Test that cost allocation feature flags exist in budgeteer.config.yaml"""
 
-    def test_feature_flag_key_in_cdk_json(self):
-        with open('cdk.json', 'r') as f:
-            cdk_config = json.load(f)
-        feature_flags = cdk_config.get('context', {}).get('bedrock-budgeteer:feature-flags', {})
-        self.assertIn('enable_cost_allocation_reporting', feature_flags)
+    def test_feature_flag_in_config(self):
+        import yaml
+        with open('budgeteer.config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        features = config.get('features', {})
+        self.assertIn('enable_cost_allocation_reporting', features)
 
-    def test_key_provisioning_flag_in_cdk_json(self):
-        with open('cdk.json', 'r') as f:
-            cdk_config = json.load(f)
-        feature_flags = cdk_config.get('context', {}).get('bedrock-budgeteer:feature-flags', {})
-        self.assertIn('enable_key_provisioning', feature_flags)
+    def test_key_provisioning_flag_in_config(self):
+        import yaml
+        with open('budgeteer.config.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        features = config.get('features', {})
+        self.assertIn('enable_key_provisioning', features)
 
 
 class TestCostAllocationSyncLambdaCode(unittest.TestCase):

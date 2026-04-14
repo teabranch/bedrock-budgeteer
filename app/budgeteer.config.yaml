@@ -1,0 +1,48 @@
+# Bedrock Budgeteer Configuration
+# All settings for the CDK stack in one place.
+# Usage: cdk deploy                              # reads this file
+#        cdk deploy -c config=staging.yaml       # reads a different file
+
+region: us-east-1
+alert_email: ops@ops1.com
+
+# Feature toggles
+features:
+  enable_agentcore_budgeting: true
+  enable_key_provisioning: true
+  enable_cost_allocation_reporting: true
+
+# API key budget defaults (used by user_setup and budget_monitor Lambdas)
+budgets:
+  default_user_budget_usd: 1
+  grace_period_seconds: 300
+  thresholds_percent_warn: 70
+  thresholds_percent_critical: 90
+  budget_refresh_period_days: 30
+
+# Key provisioning pool and tier limits
+key_provisioning:
+  api_key_pool_budget_usd: 500
+  budget_tier_low_usd: 1
+  budget_tier_medium_usd: 5
+  budget_tier_high_usd: 25
+  api_key_global_cap_usd: 1000
+
+# AgentCore runtime budget defaults
+agentcore:
+  global_budget_limit_usd: 500
+  grace_period_seconds: 3600
+  warning_threshold_percent: 75
+  critical_threshold_percent: 90
+  default_per_agent_budget_usd: none
+
+# Log retention
+retention:
+  log_retention_days: 7
+
+# Infrastructure flags (CDK resource options)
+infrastructure:
+  enable_encryption: true
+  enable_point_in_time_recovery: true
+  enable_multi_az: false
+  skip_s3_public_access_block: true
