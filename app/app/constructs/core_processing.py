@@ -166,199 +166,331 @@ class CoreProcessingConstruct(Construct):
         )
     
     def _create_budget_monitor_lambda(self, common_config: Dict[str, Any]) -> None:
-        """Create Lambda function for budget monitoring and threshold evaluation"""
-        
+        """Create Lambda function for budget monitoring with pool and global cap enforcement"""
+
         function_code = f"""
 {get_shared_lambda_utilities()}
 
+import time
+import json
+
+ssm_client = boto3.client('ssm')
+sfn_client = boto3.client('stepfunctions')
+
+
 def lambda_handler(event, context):
-    \"\"\"Monitor budgets for threshold violations and trigger suspension workflows\"\"\"
+    \"\"\"Monitor API key budgets: per-key, pool, and global cap enforcement\"\"\"
     logger.info("Starting budget monitoring run")
-    
+
     try:
         user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
-        
-        scan_kwargs = {{}}
-        monitored_users = 0
-        budget_exceeded_users = 0
-        
-        while True:
-            response = user_budgets_table.scan(**scan_kwargs)
-            
-            for item in response['Items']:
-                monitored_users += 1
-                
-                # Check for budget exceeded (100%+)
-                principal_id = item['principal_id']
-                spent_usd = float(item.get('spent_usd', 0))
-                budget_limit_usd = float(item.get('budget_limit_usd', 0))
-                status = item.get('status', 'active')
-                grace_deadline_epoch = item.get('grace_deadline_epoch')
-                
-                # Skip if already suspended or not active
-                if status in ['suspended', 'restricted'] or budget_limit_usd == 0:
-                    continue
-                
-                # Check if budget is exceeded (100% or more)
-                budget_usage_percent = (spent_usd / budget_limit_usd) * 100 if budget_limit_usd > 0 else 0
-                
-                if budget_usage_percent >= 100.0:
-                    logger.warning(f"Budget exceeded for {{principal_id}}: ${{spent_usd:.2f}} / ${{budget_limit_usd:.2f}} ({{budget_usage_percent:.1f}}%)")
-                    budget_exceeded_users += 1
-                    
-                    # Check if already in grace period
-                    current_time = datetime.now(timezone.utc)
-                    
-                    if grace_deadline_epoch:
-                        # Already in grace period - check if expired
-                        # Convert Decimal to int/float for datetime.fromtimestamp()
-                        try:
-                            # Handle Decimal, int, float, or string epoch values
-                            if hasattr(grace_deadline_epoch, '__float__'):
-                                epoch_timestamp = float(grace_deadline_epoch)
-                            else:
-                                epoch_timestamp = float(str(grace_deadline_epoch))
-                            grace_deadline = datetime.fromtimestamp(epoch_timestamp, timezone.utc)
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"Invalid grace_deadline_epoch format for {{principal_id}}: {{grace_deadline_epoch}} - {{e}}")
-                            # Skip this user if timestamp is invalid
-                            continue
-                        if current_time >= grace_deadline:
-                            logger.error(f"Grace period expired for {{principal_id}} - triggering immediate suspension")
-                            trigger_suspension_workflow(principal_id, item, "grace_period_expired")
-                        else:
-                            remaining_seconds = int((grace_deadline - current_time).total_seconds())
-                            logger.info(f"{{principal_id}} still in grace period - {{remaining_seconds}}s remaining")
-                    else:
-                        # Budget just exceeded - start grace period
-                        logger.error(f"Budget limit exceeded for {{principal_id}} - starting grace period")
-                        start_grace_period(principal_id, item)
-                
-                # Also check for users approaching limits for early warning
-                elif budget_usage_percent >= 90.0:
-                    logger.warning(f"Budget critical threshold reached for {{principal_id}}: {{budget_usage_percent:.1f}}%")
-            
-            if 'LastEvaluatedKey' in response:
-                scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+
+        items = _scan_all(user_budgets_table)
+
+        # Classify items
+        global_pool = None
+        budgeted_keys = []
+        unbudgeted_keys = []
+
+        for item in items:
+            principal_id = item['principal_id']
+            if principal_id == 'GLOBAL_API_KEY_POOL':
+                global_pool = item
+                continue
+            if item.get('status') in ('suspended', 'restricted', 'deleted'):
+                continue
+            if not principal_id.startswith('BedrockAPIKey-'):
+                continue  # Skip non-API-key entries
+            if item.get('has_carveout'):
+                budgeted_keys.append(item)
             else:
-                break
-        
+                unbudgeted_keys.append(item)
+
+        grace_period_seconds = int(ConfigurationManager.get_parameter(
+            '/bedrock-budgeteer/global/grace_period_seconds', 60
+        ))
+        warning_threshold = float(ConfigurationManager.get_parameter(
+            '/bedrock-budgeteer/global/thresholds_percent_warn', 70
+        ))
+        critical_threshold = float(ConfigurationManager.get_parameter(
+            '/bedrock-budgeteer/global/thresholds_percent_critical', 90
+        ))
+
+        suspensions_triggered = 0
+
+        # === Tier 1: Per-key check (budgeted keys only) ===
+        for key_item in budgeted_keys:
+            budget = float(key_item.get('budget_limit_usd', 0))
+            spent = float(key_item.get('spent_usd', 0))
+            if budget <= 0:
+                continue
+            usage_percent = (spent / budget) * 100
+
+            if usage_percent >= 100:
+                suspensions_triggered += _handle_budget_exceeded(
+                    user_budgets_table, key_item, grace_period_seconds, 'per_key'
+                )
+            elif usage_percent >= critical_threshold:
+                _update_threshold_state(user_budgets_table, key_item, 'critical')
+            elif usage_percent >= warning_threshold:
+                _update_threshold_state(user_budgets_table, key_item, 'warning')
+            else:
+                _update_threshold_state(user_budgets_table, key_item, 'normal')
+
+        # === Tier 2: Pool check (unbudgeted keys) ===
+        computed_pool_spent = sum(float(k.get('spent_usd', 0)) for k in unbudgeted_keys)
+        pool_budget = 500.0  # default
+        pool_usage_percent = 0.0
+
+        if global_pool:
+            pool_budget = float(global_pool.get('budget_limit_usd', 500))
+            cached_pool_spent = float(global_pool.get('spent_usd', 0))
+
+            # Verify pool math: computed vs cached
+            if abs(computed_pool_spent - cached_pool_spent) > 0.01:
+                logger.warning(
+                    f"Pool spent drift: computed=${{computed_pool_spent:.4f}}, "
+                    f"cached=${{cached_pool_spent:.4f}}"
+                )
+
+            # Use computed value for enforcement
+            if pool_budget > 0:
+                pool_usage_percent = (computed_pool_spent / pool_budget) * 100
+
+                if pool_usage_percent >= 100:
+                    logger.error(f"Pool exhausted: ${{computed_pool_spent:.2f}} / ${{pool_budget:.2f}}")
+                    for key_item in unbudgeted_keys:
+                        if key_item.get('status') not in ('suspended', 'grace_period'):
+                            suspensions_triggered += _handle_budget_exceeded(
+                                user_budgets_table, key_item, grace_period_seconds, 'pool_exhausted'
+                            )
+                    _update_threshold_state(user_budgets_table, global_pool, 'exhausted')
+                elif pool_usage_percent >= critical_threshold:
+                    _update_threshold_state(user_budgets_table, global_pool, 'critical')
+                elif pool_usage_percent >= warning_threshold:
+                    _update_threshold_state(user_budgets_table, global_pool, 'warning')
+                else:
+                    _update_threshold_state(user_budgets_table, global_pool, 'normal')
+
+        # === Tier 3: Global cap check (all keys) ===
+        global_cap = float(ConfigurationManager.get_parameter(
+            '/bedrock-budgeteer/global/api_key_global_cap_usd', 1000
+        ))
+        total_all_keys_spent = sum(
+            float(k.get('spent_usd', 0)) for k in budgeted_keys + unbudgeted_keys
+        )
+
+        if global_cap > 0 and total_all_keys_spent >= global_cap:
+            logger.error(
+                f"Global cap breached: ${{total_all_keys_spent:.2f}} / ${{global_cap:.2f}}"
+            )
+            for key_item in budgeted_keys + unbudgeted_keys:
+                if key_item.get('status') not in ('suspended', 'grace_period'):
+                    suspensions_triggered += _handle_budget_exceeded(
+                        user_budgets_table, key_item, grace_period_seconds, 'global_cap'
+                    )
+
+        # Check for budget refreshes (suspended keys eligible for restoration)
+        restorations_triggered = _check_budget_refreshes(user_budgets_table, items)
+
         # Publish metrics
+        all_active_keys = budgeted_keys + unbudgeted_keys
         MetricsPublisher.publish_budget_metric(
             'MonitoredUsers',
-            monitored_users,
+            len(all_active_keys),
             'Count',
             {{'Environment': os.environ['ENVIRONMENT']}}
         )
-        
         MetricsPublisher.publish_budget_metric(
             'BudgetExceededUsers',
-            budget_exceeded_users,
+            suspensions_triggered,
             'Count',
             {{'Environment': os.environ['ENVIRONMENT']}}
         )
-        
-        logger.info(f"Budget monitoring completed: {{monitored_users}} users monitored, {{budget_exceeded_users}} budget exceeded")
+        MetricsPublisher.publish_budget_metric(
+            'ApiKeyPoolSpentUsd',
+            computed_pool_spent,
+            'None',
+            {{'Environment': os.environ['ENVIRONMENT']}}
+        )
+        MetricsPublisher.publish_budget_metric(
+            'ApiKeyGlobalCapSpentUsd',
+            total_all_keys_spent,
+            'None',
+            {{'Environment': os.environ['ENVIRONMENT']}}
+        )
+
+        logger.info(
+            f"Budget monitoring completed: {{len(all_active_keys)}} keys, "
+            f"{{suspensions_triggered}} suspensions, {{restorations_triggered}} restorations"
+        )
         return {{
             'statusCode': 200,
-            'monitored_users': monitored_users,
-            'budget_exceeded_users': budget_exceeded_users
+            'monitored_keys': len(all_active_keys),
+            'suspensions_triggered': suspensions_triggered,
+            'restorations_triggered': restorations_triggered,
+            'pool_usage_percent': pool_usage_percent
         }}
-        
+
     except Exception as e:
         logger.error(f"Error in budget monitoring: {{e}}", exc_info=True)
         raise
 
-def start_grace_period(principal_id, budget_item):
-    \"\"\"Start grace period for budget exceeded user\"\"\"
-    try:
-        # Configurable grace period from SSM parameter
-        grace_period_seconds = ConfigurationManager.get_parameter(
-            '/bedrock-budgeteer/global/grace_period_seconds', 60
-        )
-        
-        current_time = datetime.now(timezone.utc)
-        grace_deadline = current_time + timedelta(seconds=grace_period_seconds)
-        
-        # Update budget record with grace deadline
-        user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
-        user_budgets_table.update_item(
+
+def _handle_budget_exceeded(table, key_item, grace_period_seconds, reason):
+    \"\"\"Handle a key that has exceeded its budget (per-key, pool, or global cap)\"\"\"
+    principal_id = key_item['principal_id']
+    current_status = key_item.get('status', 'active')
+
+    if current_status == 'suspended':
+        return 0
+
+    grace_deadline_epoch = key_item.get('grace_deadline_epoch')
+
+    if grace_deadline_epoch:
+        try:
+            epoch_ts = float(str(grace_deadline_epoch))
+        except (ValueError, TypeError):
+            logger.error(f"Invalid grace_deadline_epoch for {{principal_id}}: {{grace_deadline_epoch}}")
+            return 0
+
+        if time.time() >= epoch_ts:
+            _trigger_suspension_workflow(key_item, reason)
+            return 1
+        else:
+            logger.info(f"{{principal_id}} in grace period until {{grace_deadline_epoch}}")
+            return 0
+    else:
+        deadline = int(time.time()) + grace_period_seconds
+        table.update_item(
             Key={{'principal_id': principal_id}},
-            UpdateExpression='SET grace_deadline_epoch = :deadline, #status = :status',
-            ExpressionAttributeNames={{'#status': 'status'}},
+            UpdateExpression='SET #s = :status, grace_deadline_epoch = :deadline',
+            ExpressionAttributeNames={{'#s': 'status'}},
             ExpressionAttributeValues={{
-                ':deadline': int(grace_deadline.timestamp()),
-                ':status': 'grace_period'
+                ':status': 'grace_period',
+                ':deadline': deadline
             }}
         )
-        
-        # Publish grace period started event
+        # Update in-memory state so subsequent tier checks in the same run
+        # see the new status and don't double-grace this key
+        key_item['status'] = 'grace_period'
+        key_item['grace_deadline_epoch'] = deadline
+        logger.info(f"Started grace period for {{principal_id}}, deadline: {{deadline}}")
+
         EventPublisher.publish_budget_event(
             'Grace Period Started',
             {{
                 'principal_id': principal_id,
-                'budget_limit_usd': float(budget_item.get('budget_limit_usd', 0)),
-                'spent_usd': float(budget_item.get('spent_usd', 0)),
-                'grace_period_seconds': grace_period_seconds,
-                'grace_deadline': grace_deadline.isoformat(),
-                'budget_usage_percent': (float(budget_item.get('spent_usd', 0)) / float(budget_item.get('budget_limit_usd', 1))) * 100
-            }}
-        )
-        
-        # Publish metric
-        MetricsPublisher.publish_budget_metric(
-            'GracePeriodsStarted',
-            1.0,
-            'Count',
-            {{'Environment': os.environ['ENVIRONMENT'], 'PrincipalId': principal_id}}
-        )
-        
-        logger.warning(f"Grace period started for {{principal_id}}: {{grace_period_seconds}}s until suspension")
-        
-    except Exception as e:
-        logger.error(f"Error starting grace period for {{principal_id}}: {{e}}")
-        # If grace period setup fails, trigger immediate suspension
-        trigger_suspension_workflow(principal_id, budget_item, "grace_period_setup_failed")
-
-def trigger_suspension_workflow(principal_id, budget_item, reason):
-    \"\"\"Trigger suspension workflow via EventBridge\"\"\"
-    try:
-        # Get configurable grace period
-        grace_period_seconds = ConfigurationManager.get_parameter(
-            '/bedrock-budgeteer/global/grace_period_seconds', 60
-        )
-        
-        # Publish suspension workflow trigger event
-        EventPublisher.publish_budget_event(
-            'Suspension Workflow Required',
-            {{
-                'principal_id': principal_id,
                 'reason': reason,
-                'grace_period_seconds': int(grace_period_seconds),
-                'budget_data': {{
-                    'account_type': budget_item.get('account_type', 'bedrock_api_key'),
-                    'budget_limit_usd': float(budget_item.get('budget_limit_usd', 0)),
-                    'spent_usd': float(budget_item.get('spent_usd', 0)),
-                    'budget_usage_percent': (float(budget_item.get('spent_usd', 0)) / float(budget_item.get('budget_limit_usd', 1))) * 100
-                }},
-                'triggered_by': 'budget_monitor',
-                'timestamp': datetime.now(timezone.utc).isoformat()
+                'grace_period_seconds': grace_period_seconds,
+                'spent_usd': float(key_item.get('spent_usd', 0)),
+                'budget_limit_usd': float(key_item.get('budget_limit_usd', 0))
             }}
         )
-        
-        # Publish metric
-        MetricsPublisher.publish_budget_metric(
-            'SuspensionWorkflowsTriggered',
-            1.0,
-            'Count',
-            {{'Environment': os.environ['ENVIRONMENT'], 'Reason': reason}}
+        return 0
+
+
+def _trigger_suspension_workflow(key_item, reason):
+    \"\"\"Trigger suspension workflow via EventBridge\"\"\"
+    principal_id = key_item['principal_id']
+    grace_period_seconds = int(ConfigurationManager.get_parameter(
+        '/bedrock-budgeteer/global/grace_period_seconds', 60
+    ))
+
+    EventPublisher.publish_budget_event(
+        'Suspension Workflow Required',
+        {{
+            'principal_id': principal_id,
+            'reason': reason,
+            'suspension_reason': reason,
+            'grace_period_seconds': grace_period_seconds,
+            'budget_data': {{
+                'account_type': key_item.get('account_type', 'bedrock_api_key'),
+                'budget_limit_usd': float(key_item.get('budget_limit_usd', 0)),
+                'spent_usd': float(key_item.get('spent_usd', 0)),
+                'has_carveout': key_item.get('has_carveout', False)
+            }},
+            'triggered_by': 'budget_monitor',
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }}
+    )
+
+    MetricsPublisher.publish_budget_metric(
+        'SuspensionWorkflowsTriggered',
+        1.0,
+        'Count',
+        {{'Environment': os.environ['ENVIRONMENT'], 'Reason': reason}}
+    )
+
+    logger.error(f"Suspension workflow triggered for {{principal_id}}: reason={{reason}}")
+
+
+def _update_threshold_state(table, item, new_state):
+    \"\"\"Update threshold state if changed\"\"\"
+    pk_field = 'principal_id'
+    pk_value = item.get('principal_id', item.get('runtime_id'))
+    current_state = item.get('threshold_state', 'normal')
+
+    if current_state != new_state:
+        table.update_item(
+            Key={{pk_field: pk_value}},
+            UpdateExpression='SET threshold_state = :state',
+            ExpressionAttributeValues={{':state': new_state}}
         )
-        
-        logger.error(f"Suspension workflow triggered for {{principal_id}}: reason={{reason}}")
-        
-    except Exception as e:
-        logger.error(f"Error triggering suspension workflow for {{principal_id}}: {{e}}")
-        raise
+        logger.info(f"Updated {{pk_value}} threshold: {{current_state}} -> {{new_state}}")
+
+        if new_state in ('warning', 'critical'):
+            EventPublisher.publish_budget_event(
+                f'Budget Threshold Changed',
+                {{
+                    'principal_id': pk_value,
+                    'threshold_state': new_state,
+                    'previous_state': current_state
+                }}
+            )
+
+
+def _check_budget_refreshes(table, items):
+    \"\"\"Check for suspended keys whose budget refresh date has passed\"\"\"
+    now = datetime.now(timezone.utc)
+    restorations = 0
+
+    for item in items:
+        if item['principal_id'] == 'GLOBAL_API_KEY_POOL':
+            continue
+        if item.get('status') != 'suspended':
+            continue
+        refresh_date_str = item.get('budget_refresh_date')
+        if not refresh_date_str:
+            continue
+
+        try:
+            refresh_date = datetime.fromisoformat(str(refresh_date_str).replace('Z', '+00:00'))
+            if now >= refresh_date:
+                EventPublisher.publish_budget_event(
+                    'Restoration Workflow Required',
+                    {{
+                        'principal_id': item['principal_id'],
+                        'account_type': item.get('account_type', 'bedrock_api_key'),
+                        'reason': 'budget_refresh'
+                    }}
+                )
+                restorations += 1
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid budget_refresh_date for {{item['principal_id']}}: {{e}}")
+
+    return restorations
+
+
+def _scan_all(table):
+    \"\"\"Scan all items from DynamoDB table with pagination\"\"\"
+    items = []
+    response = table.scan()
+    items.extend(response.get('Items', []))
+    while 'LastEvaluatedKey' in response:
+        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+        items.extend(response.get('Items', []))
+    return items
 """
         
         self.lambda_functions["budget_monitor"] = lambda_.Function(
@@ -435,12 +567,15 @@ def lambda_handler(event, context):
                             
                             user_budgets_table.update_item(
                                 Key={{'principal_id': principal_id}},
-                                UpdateExpression='SET spent_usd = :zero, budget_period_start = :period_start, budget_refresh_date = :next_refresh, refresh_count = refresh_count + :one',
+                                UpdateExpression='SET spent_usd = :zero, budget_period_start = :period_start, budget_refresh_date = :next_refresh, refresh_count = refresh_count + :one, grace_deadline_epoch = :null_val, #s = :active',
+                                ExpressionAttributeNames={{'#s': 'status'}},
                                 ExpressionAttributeValues={{
                                     ':zero': 0,
                                     ':period_start': current_time.isoformat(),
                                     ':next_refresh': next_refresh_date.isoformat(),
-                                    ':one': 1
+                                    ':one': 1,
+                                    ':null_val': None,
+                                    ':active': 'active'
                                 }}
                             )
                             refreshed_count += 1
@@ -783,10 +918,12 @@ def lambda_handler(event, context):
                         "CreateUser",
                         "CreateServiceSpecificCredential",
                         "CreateAccessKey",
-                        "AttachUserPolicy", 
+                        "AttachUserPolicy",
                         "AttachRolePolicy",
                         "PutUserPolicy",
-                        "PutRolePolicy"
+                        "PutRolePolicy",
+                        "TagUser",
+                        "UntagUser"
                     ]
                 }
             ),

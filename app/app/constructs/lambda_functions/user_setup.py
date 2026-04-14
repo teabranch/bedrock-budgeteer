@@ -1,187 +1,404 @@
 """
 User Setup Lambda Function
-Process CloudTrail IAM events to initialize Bedrock API key budgets
+Process CloudTrail IAM events to initialize Bedrock API key budgets.
+Detects CDK-provisioned vs rogue keys and enforces tagging/budget policies.
 """
-
 
 
 def get_user_setup_function_code() -> str:
     """Get the Lambda function code for user setup"""
     return '''
+# IAM and SNS clients are not in shared utilities — initialize here
+iam_client = boto3.client('iam')
+sns_client = boto3.client('sns')
+
+
 def lambda_handler(event, context):
     """
-    Process CloudTrail IAM events to initialize Bedrock API key budgets
-    
-    ONLY monitors Bedrock API keys created via Bedrock console:
-    - CreateUser events with BedrockAPIKey- prefix userName  
-    - CreateServiceSpecificCredential for existing Bedrock API key users
-    - AttachUserPolicy for existing Bedrock API key users
-    
-    IGNORES all other IAM users, service accounts, and regular user events
+    Process CloudTrail IAM events to initialize Bedrock API key budgets.
+
+    Monitors events: CreateUser, CreateServiceSpecificCredential,
+    AttachUserPolicy, PutUserPolicy, TagUser, UntagUser.
+    Only acts on userNames starting with BedrockAPIKey-.
     """
-    logger.info(f"Processing user setup event: {json.dumps(event)}")
-    
+    logger.info(f"Processing user setup event: {json.dumps(event, default=str)}")
+
     try:
-        # Parse EventBridge event
         if 'detail' not in event:
             logger.error("Invalid event format - missing detail")
             return {'statusCode': 400, 'body': 'Invalid event format'}
-        
+
         detail = event.get('detail', {})
         event_name = detail.get('eventName')
-        user_identity = detail.get('userIdentity', {})
-        response_elements = detail.get('responseElements', {})
-        
-        # ONLY process Bedrock API key events - ignore all other IAM activities
-        principal_id = None
-        account_type = 'bedrock_api_key'  # Only support bedrock_api_key type
-        is_bedrock_api_key = False
-        
-        # Check for Bedrock API key creation via CreateUser event
-        if event_name == 'CreateUser' and response_elements:
-            user_info = response_elements.get('user', {})
-            created_user_name = user_info.get('userName', '')
-            
-            if created_user_name.startswith('BedrockAPIKey-'):
-                principal_id = created_user_name
-                is_bedrock_api_key = True
-                logger.info(f"Detected Bedrock API key creation: {principal_id}")
-            else:
-                # Ignore regular user creation - not our concern
-                logger.info(f"Ignoring regular user creation: {created_user_name} (not a Bedrock API key)")
-                return {'statusCode': 200, 'body': 'Event ignored - not a Bedrock API key'}
-        
-        # Check for service-specific credential creation (only for Bedrock API keys)
-        elif event_name == 'CreateServiceSpecificCredential':
-            request_parameters = detail.get('requestParameters', {})
-            target_user_name = request_parameters.get('userName', '')
-            
-            if target_user_name.startswith('BedrockAPIKey-'):
-                principal_id = target_user_name
-                is_bedrock_api_key = True
-                logger.info(f"Bedrock API service credential created for: {principal_id}")
-            else:
-                # Ignore service credential creation for non-Bedrock users
-                logger.info(f"Ignoring service credential creation for: {target_user_name} (not a Bedrock API key)")
-                return {'statusCode': 200, 'body': 'Event ignored - not a Bedrock API key'}
-        
-        # Check for policy events on existing Bedrock API key users
-        elif event_name in ['AttachUserPolicy', 'CreateAccessKey', 'PutUserPolicy']:
-            # Extract the target user from various event types
-            request_parameters = detail.get('requestParameters', {})
-            target_user = request_parameters.get('userName') or user_identity.get('userName', '')
-            
-            if target_user and target_user.startswith('BedrockAPIKey-'):
-                principal_id = target_user
-                is_bedrock_api_key = True
-                logger.info(f"Event {event_name} detected for existing Bedrock API key user: {principal_id}")
-            else:
-                # Ignore policy events for non-Bedrock users
-                logger.info(f"Ignoring {event_name} for: {target_user} (not a Bedrock API key)")
-                return {'statusCode': 200, 'body': 'Event ignored - not a Bedrock API key'}
-        
-        else:
-            # Ignore all other event types (role events, other IAM events, etc.)
-            logger.info(f"Ignoring event type: {event_name} (not relevant to Bedrock API keys)")
-            return {'statusCode': 200, 'body': 'Event ignored - not relevant to Bedrock API keys'}
-        
-        if not principal_id or not is_bedrock_api_key:
-            logger.warning("No Bedrock API key detected in event")
-            return {'statusCode': 200, 'body': 'No Bedrock API key detected'}
-        
-        # Get or create budget entry
-        user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
-        
-        # Check if budget already exists (idempotency)
-        try:
-            response = user_budgets_table.get_item(Key={'principal_id': principal_id})
-            if 'Item' in response:
-                logger.info(f"Budget already exists for {principal_id}")
-                return {'statusCode': 200, 'body': 'Budget already exists'}
-        except Exception as e:
-            logger.error(f"Error checking existing budget: {e}")
-        
-        # Get default budget limit for Bedrock API key (only type we support)
-        default_budget = ConfigurationManager.get_parameter(
-            '/bedrock-budgeteer/global/default_user_budget_usd', 5.0
-        )
-        
-        # Get budget refresh period
-        refresh_period_days = ConfigurationManager.get_parameter(
-            '/bedrock-budgeteer/production/cost/budget_refresh_period_days', 30
-        )
-        
-        # Create new budget entry
-        current_time = datetime.now(timezone.utc)
-        
-        # Calculate next refresh date
-        refresh_date = current_time + timedelta(days=int(refresh_period_days))
-        budget_item = {
-            'principal_id': principal_id,
-            'account_type': account_type,
-            'budget_limit_usd': Decimal(str(default_budget)),
-            'spent_usd': Decimal('0.0'),
-            'status': 'active',
-            'threshold_state': 'normal',
-            'time_window_start': current_time.isoformat(),
-            'last_updated_epoch': int(current_time.timestamp()),
-            'model_spend_breakdown': {},
-            'anomaly_score': Decimal('0.0'),
-            'created_epoch': int(current_time.timestamp()),
-            'grace_deadline_epoch': None,
-            'budget_period_start': current_time.isoformat(),
-            'budget_refresh_date': refresh_date.isoformat(),
-            'refresh_period_days': int(refresh_period_days),
-            'refresh_count': 0
-        }
-        
-        user_budgets_table.put_item(Item=budget_item)
-        
-        # Publish audit event with enhanced Bedrock API key information
-        audit_data = {
-            'principal_id': principal_id,
-            'account_type': account_type,
-            'budget_limit_usd': float(default_budget),
-            'event_name': event_name,
-            'is_bedrock_api_key': is_bedrock_api_key,
-            'source_event': detail
-        }
-        
-        # Add additional context for Bedrock API key events
-        if is_bedrock_api_key:
-            audit_data['bedrock_api_key_detected'] = True
-            if event_name == 'CreateUser' and response_elements:
-                user_info = response_elements.get('user', {})
-                audit_data['user_arn'] = user_info.get('arn', '')
-                audit_data['user_id'] = user_info.get('userId', '')
-                audit_data['create_date'] = user_info.get('createDate', '')
-        
-        EventPublisher.publish_budget_event(
-            'Budget Initialized',
-            audit_data
-        )
-        
-        # Publish metric
-        MetricsPublisher.publish_budget_metric(
-            'BudgetInitialized',
-            1.0,
-            'Count',
-            {'AccountType': account_type, 'Environment': os.environ['ENVIRONMENT']}
-        )
-        
-        logger.info(f"Successfully initialized budget for {principal_id}")
-        return {'statusCode': 200, 'body': 'Budget initialized successfully'}
-        
+
+        principal_id = _extract_principal_id(event_name, detail)
+        if principal_id is None:
+            return {'statusCode': 200, 'body': 'Event ignored - not relevant'}
+
+        if not principal_id.startswith('BedrockAPIKey-'):
+            logger.info(f"Ignoring non-Bedrock API key user: {principal_id}")
+            return {'statusCode': 200, 'body': 'Event ignored - not a Bedrock API key'}
+
+        return _process_bedrock_api_key(principal_id, detail, context)
+
     except Exception as e:
         logger.error(f"Error processing user setup event: {e}", exc_info=True)
-        
-        # Publish error metric
         MetricsPublisher.publish_budget_metric(
             'UserSetupErrors',
             1.0,
             'Count',
-            {'Environment': os.environ['ENVIRONMENT']}
+            {'Environment': os.environ.get('ENVIRONMENT', 'unknown')}
         )
-        
-        raise  # Re-raise to trigger DLQ
+        raise
+
+
+def _extract_principal_id(event_name, detail):
+    """Extract the target userName from the CloudTrail event detail.
+
+    Returns the userName if the event is relevant, or None to skip.
+    """
+    response_elements = detail.get('responseElements', {})
+    request_parameters = detail.get('requestParameters', {})
+
+    if event_name == 'CreateUser' and response_elements:
+        user_info = response_elements.get('user', {})
+        return user_info.get('userName') or None
+
+    if event_name == 'CreateServiceSpecificCredential':
+        return request_parameters.get('userName') or None
+
+    if event_name in ('AttachUserPolicy', 'PutUserPolicy', 'TagUser', 'UntagUser'):
+        return request_parameters.get('userName') or detail.get('userIdentity', {}).get('userName', '')
+
+    logger.info(f"Ignoring event type: {event_name}")
+    return None
+
+
+def _process_bedrock_api_key(principal_id, event_detail, context):
+    """Orchestrate budget registration for a Bedrock API key."""
+    user_budgets_table = dynamodb.Table(os.environ['USER_BUDGETS_TABLE'])
+    event_name = event_detail.get('eventName', '')
+
+    # Idempotency: check if budget already exists
+    existing_item = _get_existing_budget(user_budgets_table, principal_id)
+    if existing_item is not None:
+        if event_name in ('TagUser', 'UntagUser'):
+            _handle_tag_change(principal_id, event_detail, user_budgets_table)
+            return {'statusCode': 200, 'body': 'Tag change processed'}
+        logger.info(f"Budget already exists for {principal_id}")
+        return {'statusCode': 200, 'body': 'Budget already exists'}
+
+    provisioning_info = _check_provisioning_status(principal_id, event_detail)
+    _ensure_global_api_key_pool(user_budgets_table)
+    _register_key_budget(principal_id, provisioning_info, user_budgets_table)
+
+    logger.info(f"Successfully initialized budget for {principal_id}")
+    return {'statusCode': 200, 'body': 'Budget initialized successfully'}
+
+
+def _get_existing_budget(table, principal_id):
+    """Return the existing budget item or None. Raises on DynamoDB errors."""
+    response = table.get_item(Key={'principal_id': principal_id})
+    return response.get('Item')
+
+
+def _check_provisioning_status(principal_id, event_detail):
+    """Determine whether a key was CDK-provisioned or manually created.
+
+    Retries once after 2 seconds if tags are not yet available (race condition).
+    """
+    import time
+
+    iam_error_count = 0
+    for attempt in range(2):
+        try:
+            response = iam_client.list_user_tags(UserName=principal_id)
+            tags = {t['Key']: t['Value'] for t in response.get('Tags', [])}
+
+            provisioned_tag = tags.get('BedrockBudgeteer:Provisioned')
+            if provisioned_tag in ('cdk', 'script'):
+                return {
+                    'provisioned_by': provisioned_tag,
+                    'team': tags.get('BedrockBudgeteer:Team', 'unknown'),
+                    'purpose': tags.get('BedrockBudgeteer:Purpose', 'unknown'),
+                    'budget_tier': tags.get('BedrockBudgeteer:BudgetTier', 'low'),
+                }
+
+            if provisioned_tag is not None:
+                # Has a Provisioned tag but value is not 'cdk' or 'script' — treat as manual
+                break
+
+            # No Provisioned tag found — retry once in case of race condition
+            if attempt == 0:
+                logger.info(f"No Provisioned tag found for {principal_id}, retrying in 2s")
+                time.sleep(2)
+                continue
+
+        except Exception as e:
+            iam_error_count += 1
+            logger.warning(f"Error listing tags for {principal_id} (attempt {attempt + 1}): {e}")
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            break
+
+    # If both IAM attempts failed, raise so Lambda retries instead of misclassifying
+    if iam_error_count >= 2:
+        raise RuntimeError(f"Could not list tags for {principal_id} after 2 attempts — aborting to avoid misclassification")
+
+    # Not CDK/script-provisioned — auto-tag as rogue
+    _auto_tag_rogue_key(principal_id, event_detail=event_detail)
+    return {
+        'provisioned_by': 'manual',
+        'team': 'unassigned',
+        'purpose': 'unassigned',
+        'budget_tier': 'low',
+    }
+
+
+def _auto_tag_rogue_key(principal_id, event_detail=None):
+    """Apply default tags to an unprovisioned key and alert."""
+    if event_detail is None:
+        event_detail = {}
+
+    default_tags = [
+        {'Key': 'BedrockBudgeteer:Team', 'Value': 'unassigned'},
+        {'Key': 'BedrockBudgeteer:Purpose', 'Value': 'unassigned'},
+        {'Key': 'BedrockBudgeteer:BudgetTier', 'Value': 'low'},
+        {'Key': 'BedrockBudgeteer:Provisioned', 'Value': 'manual'},
+        {'Key': 'BedrockBudgeteer:ManagedBy', 'Value': 'bedrock-budgeteer'},
+        {'Key': 'CostAllocation:Team', 'Value': 'unassigned'},
+        {'Key': 'CostAllocation:Purpose', 'Value': 'unassigned'},
+    ]
+
+    try:
+        iam_client.tag_user(UserName=principal_id, Tags=default_tags)
+        logger.info(f"Applied default tags to rogue key: {principal_id}")
+    except Exception as e:
+        logger.error(f"Failed to tag rogue key {principal_id}: {e}")
+
+    # Publish SNS alert
+    user_identity = event_detail.get('userIdentity', {})
+    topic_arn = os.environ.get('BUDGET_ALERTS_SNS_TOPIC_ARN', '')
+    if topic_arn:
+        try:
+            message = {
+                'alert': 'RogueKeyDetected',
+                'principal_id': principal_id,
+                'created_by': user_identity.get('arn', 'unknown'),
+                'event_time': event_detail.get('eventTime', 'unknown'),
+                'source_ip': event_detail.get('sourceIPAddress', 'unknown'),
+            }
+            sns_client.publish(
+                TopicArn=topic_arn,
+                Subject=f"Rogue Bedrock API Key Detected: {principal_id}",
+                Message=json.dumps(message, default=str),
+            )
+            logger.info(f"Published rogue key alert for {principal_id}")
+        except Exception as e:
+            logger.error(f"Failed to publish SNS alert for rogue key {principal_id}: {e}")
+
+    # Publish CloudWatch metric
+    MetricsPublisher.publish_budget_metric(
+        'RogueKeyDetected',
+        1.0,
+        'Count',
+        {'Environment': os.environ.get('ENVIRONMENT', 'unknown')}
+    )
+
+
+def _ensure_global_api_key_pool(table):
+    """Create the GLOBAL_API_KEY_POOL row if it does not already exist."""
+    now = datetime.now(timezone.utc)
+
+    global_budget = ConfigurationManager.get_parameter(
+        '/bedrock-budgeteer/global/api_key_pool_budget_usd', 500
+    )
+    refresh_days = int(ConfigurationManager.get_parameter(
+        '/bedrock-budgeteer/global/budget_refresh_period_days', 30
+    ))
+
+    try:
+        table.put_item(
+            Item={
+                'principal_id': 'GLOBAL_API_KEY_POOL',
+                'account_type': 'api_key_pool',
+                'budget_limit_usd': Decimal(str(global_budget)),
+                'spent_usd': Decimal('0'),
+                'status': 'active',
+                'threshold_state': 'normal',
+                'refresh_period_days': refresh_days,
+                'budget_refresh_date': (now + timedelta(days=refresh_days)).isoformat(),
+                'created_epoch': int(now.timestamp()),
+                'last_updated_epoch': int(now.timestamp()),
+            },
+            ConditionExpression='attribute_not_exists(principal_id)'
+        )
+        logger.info("Created GLOBAL_API_KEY_POOL row")
+    except Exception as e:
+        from botocore.exceptions import ClientError as _PoolClientError
+        if isinstance(e, _PoolClientError) and e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            logger.debug("GLOBAL_API_KEY_POOL already exists — skipping")
+        else:
+            logger.error(f"Error creating GLOBAL_API_KEY_POOL: {e}")
+            raise
+
+
+def _register_key_budget(principal_id, provisioning_info, table):
+    """Create a budget record for a Bedrock API key."""
+    now = datetime.now(timezone.utc)
+    provisioned_by = provisioning_info.get('provisioned_by', 'manual')
+    team = provisioning_info.get('team', 'unassigned')
+    purpose = provisioning_info.get('purpose', 'unassigned')
+    budget_tier = provisioning_info.get('budget_tier', 'low')
+
+    if provisioned_by in ('cdk', 'script'):
+        tier_defaults = {'low': 1, 'medium': 5, 'high': 25}
+        tier_budget = ConfigurationManager.get_parameter(
+            f'/bedrock-budgeteer/global/budget_tier_{budget_tier}_usd',
+            tier_defaults.get(budget_tier, 5)
+        )
+        has_carveout = True
+        budget_limit_usd = Decimal(str(tier_budget))
+    else:
+        has_carveout = False
+        budget_limit_usd = None
+
+    refresh_days = int(ConfigurationManager.get_parameter(
+        '/bedrock-budgeteer/global/budget_refresh_period_days', 30
+    ))
+
+    budget_item = {
+        'principal_id': principal_id,
+        'account_type': 'bedrock_api_key',
+        'spent_usd': Decimal('0'),
+        'status': 'active',
+        'threshold_state': 'normal',
+        'has_carveout': has_carveout,
+        'team': team,
+        'purpose': purpose,
+        'budget_tier': budget_tier,
+        'provisioned_by': provisioned_by,
+        'budget_period_start': now.isoformat(),
+        'budget_refresh_date': (now + timedelta(days=refresh_days)).isoformat(),
+        'created_epoch': int(now.timestamp()),
+        'last_updated_epoch': int(now.timestamp()),
+    }
+
+    if budget_limit_usd is not None:
+        budget_item['budget_limit_usd'] = budget_limit_usd
+
+    from botocore.exceptions import ClientError as _ClientError
+    try:
+        table.put_item(
+            Item=budget_item,
+            ConditionExpression='attribute_not_exists(principal_id)'
+        )
+        logger.info(f"Registered budget for {principal_id}: carveout={has_carveout}, tier={budget_tier}")
+    except _ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            logger.info(f"Budget already exists for {principal_id} — skipping (idempotent)")
+            return
+        raise
+
+    MetricsPublisher.publish_budget_metric(
+        'BudgetInitialized',
+        1.0,
+        'Count',
+        {'AccountType': 'bedrock_api_key', 'Environment': os.environ.get('ENVIRONMENT', 'unknown')}
+    )
+
+    EventPublisher.publish_budget_event(
+        'Budget Initialized',
+        {
+            'principal_id': principal_id,
+            'account_type': 'bedrock_api_key',
+            'has_carveout': has_carveout,
+            'budget_tier': budget_tier,
+            'provisioned_by': provisioned_by,
+            'budget_limit_usd': float(budget_limit_usd) if budget_limit_usd is not None else None,
+        }
+    )
+
+
+def _handle_tag_change(principal_id, event_detail, table):
+    """Re-check tags after a TagUser/UntagUser event and reconcile."""
+    try:
+        response = iam_client.list_user_tags(UserName=principal_id)
+        tags = {t['Key']: t['Value'] for t in response.get('Tags', [])}
+    except Exception as e:
+        logger.error(f"Failed to list tags for {principal_id} during tag change: {e}")
+        return
+
+    # If the Provisioned tag was removed, re-apply it from DynamoDB record and alert
+    provisioned_value = tags.get('BedrockBudgeteer:Provisioned')
+    if provisioned_value is None:
+        # Look up the original provisioned_by from DynamoDB to restore correctly
+        try:
+            item_resp = table.get_item(Key={'principal_id': principal_id}, ProjectionExpression='provisioned_by')
+            original_provisioned = item_resp.get('Item', {}).get('provisioned_by', 'manual')
+        except Exception:
+            original_provisioned = 'manual'
+        logger.warning(f"Provisioned tag removed from {principal_id} — re-applying as '{original_provisioned}'")
+        try:
+            iam_client.tag_user(
+                UserName=principal_id,
+                Tags=[{'Key': 'BedrockBudgeteer:Provisioned', 'Value': original_provisioned}]
+            )
+        except Exception as e:
+            logger.error(f"Failed to re-apply Provisioned tag to {principal_id}: {e}")
+
+        topic_arn = os.environ.get('BUDGET_ALERTS_SNS_TOPIC_ARN', '')
+        if topic_arn:
+            try:
+                sns_client.publish(
+                    TopicArn=topic_arn,
+                    Subject=f"Tag Tampering Detected: {principal_id}",
+                    Message=json.dumps({
+                        'alert': 'TagTamperingDetected',
+                        'principal_id': principal_id,
+                        'missing_tag': 'BedrockBudgeteer:Provisioned',
+                        'event_time': event_detail.get('eventTime', 'unknown'),
+                    }, default=str),
+                )
+            except Exception as e:
+                logger.error(f"Failed to publish tag tampering alert: {e}")
+
+    # Update DynamoDB record with current tag values
+    update_fields = {}
+    if 'BedrockBudgeteer:Team' in tags:
+        update_fields['team'] = tags['BedrockBudgeteer:Team']
+    if 'BedrockBudgeteer:Purpose' in tags:
+        update_fields['purpose'] = tags['BedrockBudgeteer:Purpose']
+    if 'BedrockBudgeteer:BudgetTier' in tags:
+        new_tier = tags['BedrockBudgeteer:BudgetTier']
+        update_fields['budget_tier'] = new_tier
+        # Also update budget_limit_usd when tier changes
+        tier_defaults = {'low': 1, 'medium': 5, 'high': 25}
+        new_limit = ConfigurationManager.get_parameter(
+            f'/bedrock-budgeteer/global/budget_tier_{new_tier}_usd',
+            tier_defaults.get(new_tier, 5)
+        )
+        update_fields['budget_limit_usd'] = Decimal(str(new_limit))
+
+    # Always update last_updated_epoch, even if no tag fields changed
+    update_fields['last_updated_epoch'] = int(datetime.now(timezone.utc).timestamp())
+
+    if update_fields:
+        update_parts = []
+        expr_values = {}
+        for key, value in update_fields.items():
+            safe_key = key.replace('-', '_')
+            update_parts.append(f'{key} = :{safe_key}')
+            expr_values[f':{safe_key}'] = value if not isinstance(value, float) else Decimal(str(value))
+
+        try:
+            table.update_item(
+                Key={'principal_id': principal_id},
+                UpdateExpression='SET ' + ', '.join(update_parts),
+                ExpressionAttributeValues=expr_values,
+            )
+            logger.info(f"Updated budget record tags for {principal_id}: {update_fields}")
+        except Exception as e:
+            logger.error(f"Failed to update budget record for {principal_id}: {e}")
 '''

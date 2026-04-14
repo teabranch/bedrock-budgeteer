@@ -29,6 +29,12 @@ Bedrock Budgeteer is an enterprise-grade solution that automatically monitors an
 - Comprehensive audit trails and compliance logging
 - IAM policy-based access control
 
+✅ **Key Provisioning & Governance**
+- Provision tagged API keys via CLI (`manage_keys.py`) — no CDK deploy needed
+- Rogue key detection: auto-tags and alerts on keys created outside the CLI
+- Pool-based budgets: global pool + per-key carve-outs with 3-tier enforcement
+- AWS Cost Explorer integration with daily sync and reconciliation dashboards
+
 ✅ **Serverless & Cost-Optimized**
 - Pay-per-use architecture with no persistent infrastructure costs
 - Auto-scaling DynamoDB and Lambda functions

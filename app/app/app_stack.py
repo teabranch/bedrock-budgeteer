@@ -22,6 +22,7 @@ from .constructs.log_storage import LogStorageConstruct
 from .constructs.core_processing import CoreProcessingConstruct
 from .constructs.workflow_orchestration import WorkflowOrchestrationConstruct
 from .constructs.agentcore import AgentCoreConstruct
+from .constructs.cost_allocation_reporting import CostAllocationReportingConstruct
 # Operational controls removed per changelog - see 2025-09-02 updates
 
 
@@ -133,6 +134,35 @@ class BedrockBudgeteerStack(Stack):
             self.agentcore.agentcore_budgets_table.grant_read_write_data(
                 self.security.roles["lambda_execution"]
             )
+
+        # Key provisioning runtime support (feature-flagged)
+        # Keys are created externally via manage_keys.py — CDK only sets up
+        # the IAM permissions and SNS wiring needed for rogue key detection.
+        if feature_flags.get("enable_key_provisioning"):
+            self.security.add_key_provisioning_iam_permissions()
+
+            budget_alerts_topic = self.monitoring.topics.get("budget_alerts")
+            if budget_alerts_topic:
+                self.core_processing.functions["user_setup"].add_environment(
+                    "BUDGET_ALERTS_SNS_TOPIC_ARN",
+                    budget_alerts_topic.topic_arn
+                )
+
+        # Deploy Cost Allocation Reporting (feature-flagged)
+        if feature_flags.get("enable_cost_allocation_reporting"):
+            self.security.add_cost_explorer_permissions()
+
+            self.cost_allocation_reporting = CostAllocationReportingConstruct(
+                self, "CostAllocationReporting",
+                environment_name=environment_name,
+                lambda_execution_role=self.security.roles["lambda_execution"],
+                usage_tracking_table=self.data_storage.tables["usage_tracking"],
+                sns_topics=self.monitoring.topics,
+                kms_key=self.kms_key,
+            )
+
+            # Create cost allocation dashboard
+            self.monitoring.create_cost_allocation_dashboard()
 
         # Add additional permissions to security roles
         self._configure_security_permissions()

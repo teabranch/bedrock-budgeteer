@@ -15,25 +15,6 @@
     ]
   },
   "context": {
-    "bedrock-budgeteer:config": {
-      "region": "us-east-1",
-      "alert-email": "ops@ops1.com",
-      "budget-limits": {
-        "default-user-budget": 1,
-        "max-user-budget": 3
-      },
-      "retention": {
-        "logs": 180,
-        "data": 2555
-      }
-    },
-    "bedrock-budgeteer:feature-flags": {
-      "enable-encryption": true,
-      "enable-point-in-time-recovery": true,
-      "enable-multi-az": false,
-      "skip-s3-public-access-block": true,
-      "enable_agentcore_budgeting": true
-    },
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/core:target-partitions": [

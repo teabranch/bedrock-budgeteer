@@ -24,6 +24,11 @@ Centralized configuration management using AWS Systems Manager Parameter Store w
 ├── thresholds_percent_critical
 ├── default_user_budget_usd
 ├── grace_period_seconds
+├── api_key_pool_budget_usd
+├── budget_tier_low_usd
+├── budget_tier_medium_usd
+├── budget_tier_high_usd
+├── api_key_global_cap_usd
 └── agentcore/
     ├── global_budget_limit_usd
     ├── grace_period_seconds
@@ -70,6 +75,19 @@ Requires the `enable_agentcore_budgeting` feature flag in `cdk.json`.
 | `warning_threshold_percent` | String | 75 | AgentCore budget warning threshold percentage | AgentCore budget monitor Lambda |
 | `critical_threshold_percent` | String | 90 | AgentCore budget critical threshold percentage | AgentCore budget monitor Lambda |
 | `default_per_agent_budget_usd` | String | none | Default per-agent budget limit in USD; "none" means no per-agent limit (global budget applies) | AgentCore usage calculator and budget manager Lambdas |
+
+### 5. Key Provisioning Configuration (Global)
+**Path**: `/bedrock-budgeteer/global/`
+
+Requires the `enable_key_provisioning` feature flag in `cdk.json`.
+
+| Parameter | Type | Value | Description | Used By |
+|-----------|------|-------|-------------|---------|
+| `api_key_pool_budget_usd` | String | 500 | Global budget pool shared by all unbudgeted (rogue) API keys in USD | Budget monitor Lambda |
+| `budget_tier_low_usd` | String | 1 | Budget limit for low-tier CDK-provisioned API keys in USD | User setup Lambda |
+| `budget_tier_medium_usd` | String | 5 | Budget limit for medium-tier CDK-provisioned API keys in USD | User setup Lambda |
+| `budget_tier_high_usd` | String | 25 | Budget limit for high-tier CDK-provisioned API keys in USD | User setup Lambda |
+| `api_key_global_cap_usd` | String | 1000 | Global cap guardrail across all API keys (budgeted + unbudgeted) in USD | Budget monitor Lambda |
 
 ## Parameter Types
 
@@ -174,18 +192,17 @@ aws ssm put-parameter \
   --type "String" \
   --overwrite
 
-
-# Emergency stop (halts all automation)
+# Set API key pool budget to $300
 aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/emergency_stop_active" \
-  --value "true" \
+  --name "/bedrock-budgeteer/global/api_key_pool_budget_usd" \
+  --value "300" \
   --type "String" \
   --overwrite
 
-# Exempt specific users from budget restrictions
+# Set global cap guardrail to $800
 aws ssm put-parameter \
-  --name "/bedrock-budgeteer/global/user_whitelist" \
-  --value '["admin@company.com", "service-account-1"]' \
+  --name "/bedrock-budgeteer/global/api_key_global_cap_usd" \
+  --value "800" \
   --type "String" \
   --overwrite
 ```

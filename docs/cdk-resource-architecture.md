@@ -426,7 +426,7 @@ shared Lambda execution role.
 
 **Source:** `app/app/constructs/agentcore.py`
 
-**Feature flag:** `enable_agentcore_budgeting` in `cdk.json` feature flags. This entire construct is only deployed when the flag is enabled.
+**Feature flag:** `enable_agentcore_budgeting` in `budgeteer.config.yaml`. This entire construct is only deployed when the flag is enabled.
 
 ### DynamoDB Tables (1)
 

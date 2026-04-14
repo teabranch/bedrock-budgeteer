@@ -509,6 +509,75 @@ Retrieve the current budget status for an agent or the global budget.
 }
 ```
 
+### manage_keys.py CLI
+
+Standalone script that provisions and manages Bedrock API key IAM users directly via AWS APIs. No CDK deploy needed per key.
+
+**Prerequisites:**
+- AWS credentials configured (`aws configure` or environment variables)
+- `enable_key_provisioning: true` in `cdk.json` and deployed (for runtime support: SSM params, IAM permissions, SNS wiring)
+- Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the AWS Billing console for Cost Explorer grouping
+
+**Commands:**
+```bash
+# Create a tagged IAM user with Bedrock access
+python manage_keys.py add --team platform --purpose chatbot-prod --budget-tier medium
+
+# List all BedrockAPIKey-* users with their tags
+python manage_keys.py list
+
+# Remove an IAM user (detaches policies, deletes access keys, deletes user)
+python manage_keys.py remove --team platform --purpose chatbot-prod
+```
+
+**Parameters (add):**
+- `--team` (required): Team name (e.g., `platform`, `ml-ops`)
+- `--purpose` (required): Use case (e.g., `chatbot-prod`, `batch-inference`)
+- `--budget-tier` (optional): `low` ($1), `medium` ($5), or `high` ($25). Default: `low`
+
+**IAM User Created:**
+- Named `BedrockAPIKey-{team}-{purpose}` with `AmazonBedrockLimitedAccess` managed policy
+- **Tags Applied** (7): `BedrockBudgeteer:Team`, `BedrockBudgeteer:Purpose`, `BedrockBudgeteer:BudgetTier`, `BedrockBudgeteer:Provisioned` (=`script`), `BedrockBudgeteer:ManagedBy`, `CostAllocation:Team`, `CostAllocation:Purpose`
+
+**How it works:** The script creates the IAM user directly. The existing CloudTrail → EventBridge → `user_setup` Lambda pipeline detects the new user, reads its tags, and automatically registers the budget based on the tier.
+
+---
+
+### CostAllocationReportingConstruct
+
+Daily Cost Explorer sync and reconciliation for Bedrock cost reporting. Enabled via the `enable_cost_allocation_reporting` feature flag in `cdk.json`.
+
+**Constructor:**
+```python
+CostAllocationReportingConstruct(
+    scope: Construct,
+    construct_id: str,
+    environment_name: str,
+    lambda_execution_role: iam.Role,
+    usage_tracking_table: dynamodb.Table,
+    sns_topics: Optional[Dict[str, sns.Topic]] = None,
+    kms_key: Optional[kms.Key] = None,
+    **kwargs
+)
+```
+
+**Resources Created:**
+- **Lambda Functions** (2):
+  - `cost_allocation_sync`: Queries Cost Explorer daily, publishes CloudWatch metrics by team/purpose/tier
+  - `cost_reconciliation`: Compares Cost Explorer totals vs internal `usage_tracking` table, alerts on >10% drift
+- **DLQs** (2): Dead letter queues for each Lambda
+- **EventBridge Schedules** (2): Daily at 06:00 UTC (sync) and 07:00 UTC (reconciliation)
+
+**Lambda Environment Variables:**
+- `ENVIRONMENT`: Environment name
+- `USAGE_TRACKING_TABLE`: DynamoDB table name (reconciliation Lambda only)
+- `OPERATIONAL_ALERTS_SNS_TOPIC_ARN`: SNS topic for drift alerts (reconciliation Lambda only)
+
+**CloudWatch Metrics Published** (namespace: `BedrockBudgeteer/CostAllocation`):
+- `CostByTeam`, `CostByPurpose`, `CostByTier`, `TotalBedrockCost`, `CostReconciliationDrift`
+
+---
+
 ### MonitoringConstruct
 
 Manages CloudWatch resources, dashboards, and alarms.
@@ -694,17 +763,20 @@ def create_failure_state(self, state_name: str, error: str, cause: str) -> sfn.F
 
 ### ConfigurationManager
 
-Manages SSM parameter configuration with caching.
+Manages SSM parameter configuration with time-based caching.
+
+**Caching:** Parameters are cached for **5 minutes** (TTL). After expiry, the next `get_parameter` call refreshes from SSM. This means SSM parameter changes (e.g., threshold updates, budget adjustments) take up to 5 minutes to take effect in running Lambda functions.
 
 **Methods:**
 ```python
 @classmethod
 def get_parameter(cls, parameter_name: str, default_value: Any = None) -> Any
-    """Get parameter from SSM Parameter Store with caching"""
+    """Get parameter from SSM Parameter Store with 5-min TTL cache.
+    Returns default_value if SSM lookup fails."""
 
-@classmethod  
+@classmethod
 def get_budget_thresholds(cls) -> Dict[str, float]
-    """Get budget threshold configuration"""
+    """Get budget threshold configuration (warn_percent, critical_percent)"""
 ```
 
 ### DynamoDBHelper

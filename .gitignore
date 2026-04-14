@@ -8,6 +8,7 @@ tracking/*
 .env.test.local
 .env.production.local
 phases/*
+docs/superpowers/*
 venv/*
 _site/
 .jekyll-cache/

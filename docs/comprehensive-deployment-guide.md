@@ -159,20 +159,16 @@ export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
 
 **Configure Feature Flags (Optional):**
 
-Feature flags are set in `app/cdk.json` under the `bedrock-budgeteer:feature-flags` context key.
+Feature flags are set in `app/budgeteer.config.yaml` under the `features` section.
 
-To enable AgentCore budgeting, add or update the feature flags section:
-```json
-{
-  "context": {
-    "bedrock-budgeteer:feature-flags": {
-      "enable_agentcore_budgeting": true
-    }
-  }
-}
+To enable AgentCore budgeting, set the flag in your config file:
+```yaml
+# budgeteer.config.yaml
+features:
+  enable_agentcore_budgeting: true
 ```
 
-To disable AgentCore budgeting, set the flag to `false` (or remove it) and redeploy. When disabled, no AgentCore resources are created and there is no additional cost.
+To disable AgentCore budgeting, set the flag to `false` and redeploy. When disabled, no AgentCore resources are created and there is no additional cost.
 
 When enabled, the following resources are created:
 - 1 DynamoDB table (provisioned 5/5 RCU/WCU with GSI)

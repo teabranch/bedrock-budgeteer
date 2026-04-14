@@ -27,9 +27,13 @@ class ConfigurationConstruct(Construct):
         self._create_monitoring_config()  # Log retention and monitoring settings
 
         # Add AgentCore config if feature is enabled
-        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags")
-        if feature_flags and feature_flags.get("enable_agentcore_budgeting"):
+        feature_flags = self.node.try_get_context("bedrock-budgeteer:feature-flags") or {}
+        if feature_flags.get("enable_agentcore_budgeting"):
             self._create_agentcore_config()
+
+        # Add Key Provisioning config if feature is enabled
+        if feature_flags.get("enable_key_provisioning"):
+            self._create_key_provisioning_config()
 
         # Tags are applied by TaggingFramework aspects
     
@@ -123,27 +127,31 @@ class ConfigurationConstruct(Construct):
     # Removed _get_security_config - all parameters were unused
     
     def _get_monitoring_config(self) -> Dict[str, Dict[str, str]]:
-        """Get monitoring configuration - log retention and monitoring settings"""
+        """Get monitoring configuration from YAML config context."""
+        retention = self.node.try_get_context("bedrock-budgeteer:retention") or {}
+
         monitoring_config = {
             "log_retention_days": {
-                "value": "7",
+                "value": str(retention.get("log_retention_days", 7)),
                 "description": "CloudWatch log group retention period in days"
             }
         }
-        
+
         return monitoring_config
     
     # Removed _get_integration_config - all parameters were unused
     
     def _get_cost_config(self) -> Dict[str, Dict[str, str]]:
-        """Get cost and budget configuration - only used parameters"""
+        """Get cost and budget configuration from YAML config context."""
+        budgets = self.node.try_get_context("bedrock-budgeteer:budgets") or {}
+
         cost_config = {
             "budget_refresh_period_days": {
-                "value": "30",
+                "value": str(budgets.get("budget_refresh_period_days", 30)),
                 "description": "Budget refresh period in days (resets budget and counters)"
             }
         }
-        
+
         return cost_config
     
     # Removed _create_workflow_config - all parameters were unused
@@ -163,61 +171,97 @@ class ConfigurationConstruct(Construct):
     # Removed _get_workflow_config - all parameters were unused
     
     def _get_global_config(self) -> Dict[str, Dict[str, str]]:
-        """Get global system configuration - only used parameters"""
+        """Get global system configuration from YAML config context."""
+        budgets = self.node.try_get_context("bedrock-budgeteer:budgets") or {}
+
         global_config = {
-            # Budget thresholds (used in ConfigurationManager)
             "thresholds_percent_warn": {
-                "value": "70",
+                "value": str(budgets.get("thresholds_percent_warn", 70)),
                 "description": "Budget warning threshold percentage"
             },
             "thresholds_percent_critical": {
-                "value": "90",
+                "value": str(budgets.get("thresholds_percent_critical", 90)),
                 "description": "Budget critical threshold percentage"
             },
-            # Default budget (used in user setup and usage calculator)
             "default_user_budget_usd": {
-                "value": "1",  # Testing default
+                "value": str(budgets.get("default_user_budget_usd", 1)),
                 "description": "Default budget limit for users in USD"
             },
-            # Grace period for budget violations (configurable for different environments)
             "grace_period_seconds": {
-                "value": "300",  # Default 5 minutes for production
-                "description": "Grace period in seconds before suspending users who exceed budget (300s = 5 minutes)"
+                "value": str(budgets.get("grace_period_seconds", 300)),
+                "description": "Grace period in seconds before suspending users who exceed budget"
             }
         }
-        
+
         return global_config
     
     # Removed _get_max_budget_value - no longer needed
 
     def _create_agentcore_config(self) -> None:
-        """Create AgentCore budget configuration parameters"""
+        """Create AgentCore budget configuration parameters from YAML config."""
+        ac = self.node.try_get_context("bedrock-budgeteer:agentcore") or {}
+
         agentcore_config = {
             "global_budget_limit_usd": {
-                "value": "500",
+                "value": str(ac.get("global_budget_limit_usd", 500)),
                 "description": "Global budget pool for all AgentCore runtimes (USD)"
             },
             "grace_period_seconds": {
-                "value": "3600",
+                "value": str(ac.get("grace_period_seconds", 3600)),
                 "description": "Grace period before AgentCore runtime suspension (seconds)"
             },
             "warning_threshold_percent": {
-                "value": "75",
+                "value": str(ac.get("warning_threshold_percent", 75)),
                 "description": "Warning threshold for AgentCore budget utilization"
             },
             "critical_threshold_percent": {
-                "value": "90",
+                "value": str(ac.get("critical_threshold_percent", 90)),
                 "description": "Critical threshold for AgentCore budget utilization"
             },
             "default_per_agent_budget_usd": {
-                "value": "none",
+                "value": str(ac.get("default_per_agent_budget_usd", "none")),
                 "description": "Default per-agent budget in USD (none = draws from pool)"
             }
         }
 
         for key, config in agentcore_config.items():
             self.parameters[f"agentcore_{key}"] = self._create_global_parameter(
-                category="agentcore",
+                category="global/agentcore",
+                key=key,
+                value=config["value"],
+                description=config["description"]
+            )
+
+    def _create_key_provisioning_config(self) -> None:
+        """Create Key Provisioning budget configuration parameters from YAML config."""
+        kp = self.node.try_get_context("bedrock-budgeteer:key-provisioning") or {}
+
+        key_provisioning_config = {
+            "api_key_pool_budget_usd": {
+                "value": str(kp.get("api_key_pool_budget_usd", 500)),
+                "description": "Global budget pool for all Bedrock API keys (USD)"
+            },
+            "budget_tier_low_usd": {
+                "value": str(kp.get("budget_tier_low_usd", 1)),
+                "description": "Budget limit for low-tier API keys (USD)"
+            },
+            "budget_tier_medium_usd": {
+                "value": str(kp.get("budget_tier_medium_usd", 5)),
+                "description": "Budget limit for medium-tier API keys (USD)"
+            },
+            "budget_tier_high_usd": {
+                "value": str(kp.get("budget_tier_high_usd", 25)),
+                "description": "Budget limit for high-tier API keys (USD)"
+            },
+            "api_key_global_cap_usd": {
+                "value": str(kp.get("api_key_global_cap_usd", 1000)),
+                "description": "Global cap guardrail across all API keys (USD)"
+            }
+        }
+
+        for key, config in key_provisioning_config.items():
+            self.parameters[f"key_provisioning_{key}"] = self._create_global_parameter(
+                category="global",
                 key=key,
                 value=config["value"],
                 description=config["description"]
