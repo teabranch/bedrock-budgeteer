@@ -226,7 +226,7 @@ class ConfigurationConstruct(Construct):
 
         for key, config in agentcore_config.items():
             self.parameters[f"agentcore_{key}"] = self._create_global_parameter(
-                category="agentcore",
+                category="global/agentcore",
                 key=key,
                 value=config["value"],
                 description=config["description"]

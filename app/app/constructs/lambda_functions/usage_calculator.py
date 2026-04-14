@@ -678,39 +678,43 @@ def update_user_budget(principal_id, model_id, cost, input_tokens, output_tokens
                 logger.error(f"Failed to create budget record for {principal_id}: {create_error}")
                 raise update_error
         
-        # Check budget thresholds
+        # Check budget thresholds (only for keys with a per-key carve-out)
+        # Pool-based keys have no budget_limit_usd — their enforcement is in budget_monitor
         updated_item = response['Attributes']
         spent_usd = float(updated_item['spent_usd'])
-        budget_limit_usd = float(updated_item['budget_limit_usd'])
-        
-        thresholds = ConfigurationManager.get_budget_thresholds()
-        warn_threshold = budget_limit_usd * (thresholds['warn_percent'] / 100)
-        critical_threshold = budget_limit_usd * (thresholds['critical_percent'] / 100)
-        
-        current_threshold_state = updated_item.get('threshold_state', 'normal')
-        new_threshold_state = current_threshold_state
-        
-        if spent_usd >= critical_threshold:
-            new_threshold_state = 'critical'
-        elif spent_usd >= warn_threshold:
-            new_threshold_state = 'warning'
-        else:
-            new_threshold_state = 'normal'
-        
-        if new_threshold_state != current_threshold_state:
-            user_budgets_table.update_item(
-                Key={'principal_id': principal_id},
-                UpdateExpression='SET threshold_state = :state',
-                ExpressionAttributeValues={':state': new_threshold_state}
-            )
-            EventPublisher.publish_budget_event('Budget Threshold Changed', {
-                'principal_id': principal_id,
-                'previous_state': current_threshold_state,
-                'new_state': new_threshold_state,
-                'spent_usd': spent_usd,
-                'budget_limit_usd': budget_limit_usd,
-                'percent_used': (spent_usd / budget_limit_usd) * 100
-            })
+        budget_limit_raw = updated_item.get('budget_limit_usd')
+
+        if budget_limit_raw is not None and updated_item.get('has_carveout'):
+            budget_limit_usd = float(budget_limit_raw)
+
+            thresholds = ConfigurationManager.get_budget_thresholds()
+            warn_threshold = budget_limit_usd * (thresholds['warn_percent'] / 100)
+            critical_threshold = budget_limit_usd * (thresholds['critical_percent'] / 100)
+
+            current_threshold_state = updated_item.get('threshold_state', 'normal')
+            new_threshold_state = current_threshold_state
+
+            if spent_usd >= critical_threshold:
+                new_threshold_state = 'critical'
+            elif spent_usd >= warn_threshold:
+                new_threshold_state = 'warning'
+            else:
+                new_threshold_state = 'normal'
+
+            if new_threshold_state != current_threshold_state:
+                user_budgets_table.update_item(
+                    Key={'principal_id': principal_id},
+                    UpdateExpression='SET threshold_state = :state',
+                    ExpressionAttributeValues={':state': new_threshold_state}
+                )
+                EventPublisher.publish_budget_event('Budget Threshold Changed', {
+                    'principal_id': principal_id,
+                    'previous_state': current_threshold_state,
+                    'new_state': new_threshold_state,
+                    'spent_usd': spent_usd,
+                    'budget_limit_usd': budget_limit_usd,
+                    'percent_used': (spent_usd / budget_limit_usd) * 100
+                })
         
     except Exception as e:
         logger.error(f"Error updating user budget for {principal_id}: {e}")
