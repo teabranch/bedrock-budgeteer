@@ -412,7 +412,7 @@ Feature flags in `cdk.json` control optional constructs. Set to `true` to enable
 | Flag | Default | Description |
 |------|---------|-------------|
 | `enable_agentcore_budgeting` | `true` | AgentCore runtime budget monitoring |
-| `enable_key_provisioning` | `true` | CDK-based API key provisioning with tags and pool budgets |
+| `enable_key_provisioning` | `true` | API key runtime support: SSM parameters, IAM permissions, and rogue key detection |
 | `enable_cost_allocation_reporting` | `true` | Daily Cost Explorer sync and reconciliation dashboards |
 
 ### Enabling Key Provisioning

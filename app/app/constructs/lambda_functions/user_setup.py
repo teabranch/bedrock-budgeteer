@@ -124,11 +124,11 @@ def _check_provisioning_status(principal_id, event_detail):
                     'provisioned_by': provisioned_tag,
                     'team': tags.get('BedrockBudgeteer:Team', 'unknown'),
                     'purpose': tags.get('BedrockBudgeteer:Purpose', 'unknown'),
-                    'budget_tier': tags.get('BedrockBudgeteer:BudgetTier', 'standard'),
+                    'budget_tier': tags.get('BedrockBudgeteer:BudgetTier', 'low'),
                 }
 
             if provisioned_tag is not None:
-                # Has a Provisioned tag but value is not 'cdk' — treat as manual
+                # Has a Provisioned tag but value is not 'cdk' or 'script' — treat as manual
                 break
 
             # No Provisioned tag found — retry once in case of race condition
