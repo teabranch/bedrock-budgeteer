@@ -36,6 +36,25 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 - Default grace period reduced from 300s to 60s in budget monitor logic
 
 ### Fixed
+- user_setup: `_get_existing_budget` propagates DynamoDB errors instead of swallowing (prevented spend counter resets)
+- user_setup: `_register_key_budget` uses `ConditionExpression` to prevent duplicate records on CloudTrail retries
+- user_setup: IAM tag lookup failure raises instead of silently misclassifying keys as rogue
+- user_setup: pool creation uses `ClientError` catch instead of `str(e)` matching, re-raises on non-conditional errors
+- user_setup: tag change now updates `budget_limit_usd` when budget tier changes
+- user_setup: SSM fallback defaults match tier values ($1/$5/$25) instead of $50
+- core_processing: `budget_refresh` clears `grace_deadline_epoch` and resets status to `active`
+- core_processing: `_handle_budget_exceeded` updates in-memory status to prevent double grace periods
+- core_processing: tier 2/3 checks skip keys already in `grace_period` status
+- cost_allocation_sync: uses `CostAllocation:Team`/`CostAllocation:Purpose` tags for Cost Explorer (was `BedrockBudgeteer:*`)
+- cost_reconciliation: CE `DataUnavailableException` skips reconciliation instead of false 100% drift alert
+- cost_reconciliation: drift formula uses CE as authoritative denominator
+- suspension_workflow: error handling on `send_grace_notification` and `update_user_status` (was only `apply_full_suspension`)
+- usage_calculator: gzip decompression catches specific exceptions (was bare `except`)
+- usage_calculator: SSM path uses `ENVIRONMENT` env var (was hardcoded `production`)
+- usage_calculator: metadata cache evicts oldest entry instead of thundering-herd `clear()`
+- usage_calculator: `record_usage_tracking` uses `region` parameter (was hardcoded `us-east-1`)
+- cost_allocation_reporting: DLQ `visibility_timeout` set to 30min (6x Lambda timeout)
+- configuration_manager: SSM cache entries expire after 5 minutes (was infinite)
 - Pricing API parser now filters by model ID instead of returning last matching price for any model (B7)
 - Cache write token pricing corrected from 1.0x to 1.25x input rate for 5-min TTL prompt caching (S7)
 - Claude 3.5 Sonnet v1 fallback pricing updated to extended access rate after March 2026 EOL (S8)

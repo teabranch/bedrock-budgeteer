@@ -763,17 +763,20 @@ def create_failure_state(self, state_name: str, error: str, cause: str) -> sfn.F
 
 ### ConfigurationManager
 
-Manages SSM parameter configuration with caching.
+Manages SSM parameter configuration with time-based caching.
+
+**Caching:** Parameters are cached for **5 minutes** (TTL). After expiry, the next `get_parameter` call refreshes from SSM. This means SSM parameter changes (e.g., threshold updates, budget adjustments) take up to 5 minutes to take effect in running Lambda functions.
 
 **Methods:**
 ```python
 @classmethod
 def get_parameter(cls, parameter_name: str, default_value: Any = None) -> Any
-    """Get parameter from SSM Parameter Store with caching"""
+    """Get parameter from SSM Parameter Store with 5-min TTL cache.
+    Returns default_value if SSM lookup fails."""
 
-@classmethod  
+@classmethod
 def get_budget_thresholds(cls) -> Dict[str, float]
-    """Get budget threshold configuration"""
+    """Get budget threshold configuration (warn_percent, critical_percent)"""
 ```
 
 ### DynamoDBHelper
