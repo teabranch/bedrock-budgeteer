@@ -260,7 +260,7 @@ def lambda_handler(event, context):
                 if pool_usage_percent >= 100:
                     logger.error(f"Pool exhausted: ${{computed_pool_spent:.2f}} / ${{pool_budget:.2f}}")
                     for key_item in unbudgeted_keys:
-                        if key_item.get('status') != 'suspended':
+                        if key_item.get('status') not in ('suspended', 'grace_period'):
                             suspensions_triggered += _handle_budget_exceeded(
                                 user_budgets_table, key_item, grace_period_seconds, 'pool_exhausted'
                             )
@@ -285,7 +285,7 @@ def lambda_handler(event, context):
                 f"Global cap breached: ${{total_all_keys_spent:.2f}} / ${{global_cap:.2f}}"
             )
             for key_item in budgeted_keys + unbudgeted_keys:
-                if key_item.get('status') != 'suspended':
+                if key_item.get('status') not in ('suspended', 'grace_period'):
                     suspensions_triggered += _handle_budget_exceeded(
                         user_budgets_table, key_item, grace_period_seconds, 'global_cap'
                     )
@@ -371,6 +371,10 @@ def _handle_budget_exceeded(table, key_item, grace_period_seconds, reason):
                 ':deadline': deadline
             }}
         )
+        # Update in-memory state so subsequent tier checks in the same run
+        # see the new status and don't double-grace this key
+        key_item['status'] = 'grace_period'
+        key_item['grace_deadline_epoch'] = deadline
         logger.info(f"Started grace period for {{principal_id}}, deadline: {{deadline}}")
 
         EventPublisher.publish_budget_event(
@@ -563,12 +567,15 @@ def lambda_handler(event, context):
                             
                             user_budgets_table.update_item(
                                 Key={{'principal_id': principal_id}},
-                                UpdateExpression='SET spent_usd = :zero, budget_period_start = :period_start, budget_refresh_date = :next_refresh, refresh_count = refresh_count + :one',
+                                UpdateExpression='SET spent_usd = :zero, budget_period_start = :period_start, budget_refresh_date = :next_refresh, refresh_count = refresh_count + :one, grace_deadline_epoch = :null_val, #s = :active',
+                                ExpressionAttributeNames={{'#s': 'status'}},
                                 ExpressionAttributeValues={{
                                     ':zero': 0,
                                     ':period_start': current_time.isoformat(),
                                     ':next_refresh': next_refresh_date.isoformat(),
-                                    ':one': 1
+                                    ':one': 1,
+                                    ':null_val': None,
+                                    ':active': 'active'
                                 }}
                             )
                             refreshed_count += 1

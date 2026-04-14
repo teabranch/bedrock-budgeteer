@@ -62,10 +62,10 @@ def _extract_principal_id(event_name, detail):
 
     if event_name == 'CreateUser' and response_elements:
         user_info = response_elements.get('user', {})
-        return user_info.get('userName', '')
+        return user_info.get('userName') or None
 
     if event_name == 'CreateServiceSpecificCredential':
-        return request_parameters.get('userName', '')
+        return request_parameters.get('userName') or None
 
     if event_name in ('AttachUserPolicy', 'PutUserPolicy', 'TagUser', 'UntagUser'):
         return request_parameters.get('userName') or detail.get('userIdentity', {}).get('userName', '')
@@ -97,13 +97,9 @@ def _process_bedrock_api_key(principal_id, event_detail, context):
 
 
 def _get_existing_budget(table, principal_id):
-    """Return the existing budget item or None."""
-    try:
-        response = table.get_item(Key={'principal_id': principal_id})
-        return response.get('Item')
-    except Exception as e:
-        logger.error(f"Error checking existing budget for {principal_id}: {e}")
-        return None
+    """Return the existing budget item or None. Raises on DynamoDB errors."""
+    response = table.get_item(Key={'principal_id': principal_id})
+    return response.get('Item')
 
 
 def _check_provisioning_status(principal_id, event_detail):
@@ -113,6 +109,7 @@ def _check_provisioning_status(principal_id, event_detail):
     """
     import time
 
+    iam_error_count = 0
     for attempt in range(2):
         try:
             response = iam_client.list_user_tags(UserName=principal_id)
@@ -138,13 +135,18 @@ def _check_provisioning_status(principal_id, event_detail):
                 continue
 
         except Exception as e:
+            iam_error_count += 1
             logger.warning(f"Error listing tags for {principal_id} (attempt {attempt + 1}): {e}")
             if attempt == 0:
                 time.sleep(2)
                 continue
             break
 
-    # Not CDK-provisioned — auto-tag as rogue
+    # If both IAM attempts failed, raise so Lambda retries instead of misclassifying
+    if iam_error_count >= 2:
+        raise RuntimeError(f"Could not list tags for {principal_id} after 2 attempts — aborting to avoid misclassification")
+
+    # Not CDK/script-provisioned — auto-tag as rogue
     _auto_tag_rogue_key(principal_id, event_detail=event_detail)
     return {
         'provisioned_by': 'manual',
@@ -234,11 +236,12 @@ def _ensure_global_api_key_pool(table):
         )
         logger.info("Created GLOBAL_API_KEY_POOL row")
     except Exception as e:
-        # ConditionalCheckFailedException means it already exists — safe to ignore
-        if 'ConditionalCheckFailedException' in str(e):
-            pass
+        from botocore.exceptions import ClientError as _PoolClientError
+        if isinstance(e, _PoolClientError) and e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            logger.debug("GLOBAL_API_KEY_POOL already exists — skipping")
         else:
             logger.error(f"Error creating GLOBAL_API_KEY_POOL: {e}")
+            raise
 
 
 def _register_key_budget(principal_id, provisioning_info, table):
@@ -250,8 +253,10 @@ def _register_key_budget(principal_id, provisioning_info, table):
     budget_tier = provisioning_info.get('budget_tier', 'low')
 
     if provisioned_by in ('cdk', 'script'):
+        tier_defaults = {'low': 1, 'medium': 5, 'high': 25}
         tier_budget = ConfigurationManager.get_parameter(
-            f'/bedrock-budgeteer/global/budget_tier_{budget_tier}_usd', 50
+            f'/bedrock-budgeteer/global/budget_tier_{budget_tier}_usd',
+            tier_defaults.get(budget_tier, 5)
         )
         has_carveout = True
         budget_limit_usd = Decimal(str(tier_budget))
@@ -283,8 +288,18 @@ def _register_key_budget(principal_id, provisioning_info, table):
     if budget_limit_usd is not None:
         budget_item['budget_limit_usd'] = budget_limit_usd
 
-    table.put_item(Item=budget_item)
-    logger.info(f"Registered budget for {principal_id}: carveout={has_carveout}, tier={budget_tier}")
+    from botocore.exceptions import ClientError as _ClientError
+    try:
+        table.put_item(
+            Item=budget_item,
+            ConditionExpression='attribute_not_exists(principal_id)'
+        )
+        logger.info(f"Registered budget for {principal_id}: carveout={has_carveout}, tier={budget_tier}")
+    except _ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            logger.info(f"Budget already exists for {principal_id} — skipping (idempotent)")
+            return
+        raise
 
     MetricsPublisher.publish_budget_metric(
         'BudgetInitialized',
@@ -356,10 +371,20 @@ def _handle_tag_change(principal_id, event_detail, table):
     if 'BedrockBudgeteer:Purpose' in tags:
         update_fields['purpose'] = tags['BedrockBudgeteer:Purpose']
     if 'BedrockBudgeteer:BudgetTier' in tags:
-        update_fields['budget_tier'] = tags['BedrockBudgeteer:BudgetTier']
+        new_tier = tags['BedrockBudgeteer:BudgetTier']
+        update_fields['budget_tier'] = new_tier
+        # Also update budget_limit_usd when tier changes
+        tier_defaults = {'low': 1, 'medium': 5, 'high': 25}
+        new_limit = ConfigurationManager.get_parameter(
+            f'/bedrock-budgeteer/global/budget_tier_{new_tier}_usd',
+            tier_defaults.get(new_tier, 5)
+        )
+        update_fields['budget_limit_usd'] = Decimal(str(new_limit))
+
+    # Always update last_updated_epoch, even if no tag fields changed
+    update_fields['last_updated_epoch'] = int(datetime.now(timezone.utc).timestamp())
 
     if update_fields:
-        update_fields['last_updated_epoch'] = int(datetime.now(timezone.utc).timestamp())
         update_parts = []
         expr_values = {}
         for key, value in update_fields.items():

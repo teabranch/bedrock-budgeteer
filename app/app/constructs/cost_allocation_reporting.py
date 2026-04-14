@@ -59,7 +59,7 @@ class CostAllocationReportingConstruct(Construct):
                 self, f"{name.title().replace('_', '')}DLQ",
                 queue_name=dlq_name,
                 retention_period=Duration.days(14),
-                visibility_timeout=Duration.minutes(5),
+                visibility_timeout=Duration.minutes(30),  # 6x Lambda timeout per AWS best practice
                 encryption=sqs.QueueEncryption.KMS_MANAGED,
                 removal_policy=RemovalPolicy.DESTROY
             )

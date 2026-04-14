@@ -209,7 +209,7 @@ def lambda_handler(event, context):
                 # Check if data is gzipped
                 try:
                     decoded_data = gzip.decompress(decoded_data)
-                except:
+                except (gzip.BadGzipFile, OSError):
                     pass  # Not gzipped
                 
                 log_data_str = decoded_data.decode('utf-8')
@@ -614,7 +614,7 @@ def process_bedrock_log(log_data):
 
 def record_usage_tracking(principal_id, model_id, cost, input_tokens, output_tokens,
                          usage_type, image_count=0, request_metadata=None, original_model_id=None,
-                         team=None, purpose=None):
+                         team=None, purpose=None, region=None):
     """Record usage data in the usage tracking table"""
     try:
         usage_tracking_table = dynamodb.Table(os.environ['USAGE_TRACKING_TABLE'])
@@ -630,7 +630,7 @@ def record_usage_tracking(principal_id, model_id, cost, input_tokens, output_tok
             'output_tokens': output_tokens,
             'total_tokens': input_tokens + output_tokens,
             'cost_usd': Decimal(str(cost)),
-            'region': 'us-east-1',
+            'region': region or os.environ.get('AWS_REGION', 'us-east-1'),
             'created_epoch': int(current_time.timestamp())
         }
         
@@ -724,8 +724,9 @@ def create_basic_budget_record(principal_id, initial_cost, model_id, current_tim
         default_budget = ConfigurationManager.get_parameter(
             '/bedrock-budgeteer/global/default_user_budget_usd', 5.0
         )
+        env = os.environ.get('ENVIRONMENT', 'production')
         refresh_period_days = ConfigurationManager.get_parameter(
-            '/bedrock-budgeteer/production/cost/budget_refresh_period_days', 30
+            f'/bedrock-budgeteer/{env}/cost/budget_refresh_period_days', 30
         )
         refresh_date = current_time + timedelta(days=int(refresh_period_days))
         
@@ -798,9 +799,10 @@ def _get_key_metadata(principal_id):
             'has_carveout': item.get('has_carveout', False),
             '_cached_at': _time.time()
         }
-        # Evict oldest entries if cache is full
+        # Evict oldest entry if cache is full (avoid thundering herd from clear())
         if len(_key_metadata_cache) >= _KEY_METADATA_CACHE_MAX_SIZE:
-            _key_metadata_cache.clear()
+            oldest_key = next(iter(_key_metadata_cache))
+            del _key_metadata_cache[oldest_key]
         _key_metadata_cache[principal_id] = metadata
         return metadata
     except Exception as e:

@@ -95,7 +95,10 @@ class SuspensionWorkflow(WorkflowBase):
             "Suspension workflow failed"
         )
         
-        # Build the simplified workflow definition (no more emergency override checks)
+        # Build the workflow definition.
+        # Each execution handles a single principal_id — batch suspension is implemented
+        # by the caller (_trigger_suspension_workflow) starting one execution per key.
+        # Input contract: requires principal_id, grace_period_seconds, account_type, suspension_reason.
         definition = send_grace_notification.next(
             grace_period_wait.next(
                 send_final_warning.next(
@@ -107,9 +110,11 @@ class SuspensionWorkflow(WorkflowBase):
                 )
             )
         )
-        
-        # Add error handling to the suspension task
+
+        # Add error handling to all workflow steps that can fail
+        self.add_error_handling(send_grace_notification, suspension_failure)
         self.add_error_handling(apply_full_suspension, suspension_failure)
+        self.add_error_handling(update_user_status, suspension_failure)
         
         # Create the state machine
         return self.create_state_machine(

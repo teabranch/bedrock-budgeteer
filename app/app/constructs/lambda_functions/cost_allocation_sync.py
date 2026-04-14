@@ -44,8 +44,10 @@ def lambda_handler(event, context):
     try:
         # Cost Explorer allows max 2 group-by dimensions per request
         # Make separate calls for each grouping
-        _sync_cost_by_tag(time_period, bedrock_filter, 'BedrockBudgeteer:Team', 'CostByTeam')
-        _sync_cost_by_tag(time_period, bedrock_filter, 'BedrockBudgeteer:Purpose', 'CostByPurpose')
+        # Use CostAllocation:* tags (activated in AWS Billing console) for CE grouping
+        _sync_cost_by_tag(time_period, bedrock_filter, 'CostAllocation:Team', 'CostByTeam')
+        _sync_cost_by_tag(time_period, bedrock_filter, 'CostAllocation:Purpose', 'CostByPurpose')
+        # BudgetTier uses BedrockBudgeteer: prefix (internal tag, must also be activated in Billing console)
         _sync_cost_by_tag(time_period, bedrock_filter, 'BedrockBudgeteer:BudgetTier', 'CostByTier')
         _sync_total_cost(time_period, bedrock_filter)
 
@@ -72,7 +74,7 @@ def _sync_cost_by_tag(time_period, cost_filter, tag_key, metric_name):
         for result in response.get('ResultsByTime', []):
             timestamp = datetime.strptime(result['TimePeriod']['Start'], '%Y-%m-%d')
             for group in result.get('Groups', []):
-                tag_value = group['Keys'][0].split('$')[-1] if '$' in group['Keys'][0] else group['Keys'][0]
+                tag_value = group['Keys'][0].split('$', 1)[-1] if '$' in group['Keys'][0] else group['Keys'][0]
                 if not tag_value:
                     tag_value = 'untagged'
                 cost = float(group['Metrics']['UnblendedCost']['Amount'])

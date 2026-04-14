@@ -42,6 +42,11 @@ def lambda_handler(event, context):
 
     try:
         ce_total = _get_cost_explorer_total(yesterday, today)
+
+        if ce_total is None:
+            logger.warning("Cost Explorer data unavailable — skipping reconciliation")
+            return {'statusCode': 200, 'body': 'Skipped — CE data unavailable'}
+
         internal_total = _get_internal_tracking_total(yesterday, today)
 
         drift_percent = _calculate_drift(ce_total, internal_total)
@@ -94,8 +99,8 @@ def _get_cost_explorer_total(start_date, end_date):
         return total
 
     except ce_client.exceptions.DataUnavailableException:
-        logger.warning("Cost Explorer data not available yet")
-        return Decimal('0')
+        logger.warning("Cost Explorer data not available yet — skipping reconciliation")
+        return None
 
 
 def _get_internal_tracking_total(start_date, end_date):
@@ -133,16 +138,16 @@ def _get_internal_tracking_total(start_date, end_date):
 
 
 def _calculate_drift(ce_total, internal_total):
-    """Calculate drift percentage between Cost Explorer and internal tracking"""
+    """Calculate drift percentage between Cost Explorer and internal tracking.
+    Uses CE as the authoritative denominator."""
     if ce_total == 0 and internal_total == 0:
         return 0.0
 
-    # Use the larger value as the denominator to avoid division by near-zero
-    denominator = max(float(ce_total), float(internal_total))
-    if denominator == 0:
-        return 0.0
+    if float(ce_total) == 0:
+        # CE reports zero but internal has data — 100% drift
+        return 100.0 if float(internal_total) > 0 else 0.0
 
-    drift = ((float(ce_total) - float(internal_total)) / denominator) * 100
+    drift = ((float(ce_total) - float(internal_total)) / float(ce_total)) * 100
     return round(drift, 2)
 
 
