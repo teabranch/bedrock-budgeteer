@@ -157,45 +157,59 @@ export EXTERNAL_WEBHOOK_URL=https://webhook.yourcompany.com
 export WEBHOOK_AUTH_TOKEN=your-auth-token
 ```
 
-### CDK Context Configuration
-The `app/cdk.json` file contains the application configuration:
+### Configuration File
 
-```json
-{
-  "app": "python app.py",
-  "watch": {
-    "include": ["**"],
-    "exclude": ["README.md", "cdk*.json", "requirements*.txt", "source.bat", "**/__pycache__", "**/*.pyc"]
-  },
-  "context": {
-    "bedrock-budgeteer:config": {
-      "region": "us-east-1",
-      "alert-email": "ops-alerts@company.com",
-      "budget-limits": {
-        "default-user-budget": 25,
-        "max-user-budget": 50
-      },
-      "retention": {
-        "logs": 180,
-        "data": 2555
-      }
-    },
-    "bedrock-budgeteer:feature-flags": {
-      "enable_agentcore_budgeting": true
-    }
-  }
-}
+All user-facing configuration lives in `app/budgeteer.config.yaml`. `cdk.json` is reserved for CDK framework flags — users never edit it.
+
+```yaml
+# budgeteer.config.yaml
+region: us-east-1
+alert_email: ops@company.com
+
+features:
+  enable_agentcore_budgeting: true
+  enable_key_provisioning: true
+  enable_cost_allocation_reporting: true
+
+budgets:
+  default_user_budget_usd: 1
+  grace_period_seconds: 300
+  thresholds_percent_warn: 70
+  thresholds_percent_critical: 90
+  budget_refresh_period_days: 30
+
+key_provisioning:
+  api_key_pool_budget_usd: 500
+  budget_tier_low_usd: 1
+  budget_tier_medium_usd: 5
+  budget_tier_high_usd: 25
+  api_key_global_cap_usd: 1000
+
+agentcore:
+  global_budget_limit_usd: 500
+  grace_period_seconds: 3600
+  warning_threshold_percent: 75
+  critical_threshold_percent: 90
+  default_per_agent_budget_usd: none
+
+retention:
+  log_retention_days: 7
+
+infrastructure:
+  enable_encryption: true
+  enable_point_in_time_recovery: true
+  enable_multi_az: false
+  skip_s3_public_access_block: true
+```
+
+**Custom config file:**
+```bash
+cdk deploy -c config=staging.yaml    # reads staging.yaml instead of default
 ```
 
 ### Feature Flags
 
-Feature flags are configured under `bedrock-budgeteer:feature-flags` in `cdk.json`.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `enable_agentcore_budgeting` | `false` | Enables AgentCore budgeting resources: 1 DynamoDB table, 4 Lambda functions, 4 SQS DLQs, 2 Step Functions, 2 EventBridge rules, and a Function URL for the budget management API. |
-
-To enable AgentCore budgeting, set `enable_agentcore_budgeting: true` in `cdk.json` and redeploy. SSM parameters are auto-created under `/bedrock-budgeteer/global/agentcore/`.
+Feature flags are set in the `features` section of `budgeteer.config.yaml`.
 
 ### SSM Parameter Pre-Configuration (Optional)
 You can pre-configure SSM parameters before deployment:
@@ -407,7 +421,7 @@ The system creates least-privilege roles for:
 
 ## Feature Flags
 
-Feature flags in `cdk.json` control optional constructs. Set to `true` to enable:
+Feature flags are set in the `features` section of `budgeteer.config.yaml`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -417,7 +431,7 @@ Feature flags in `cdk.json` control optional constructs. Set to `true` to enable
 
 ### Enabling Key Provisioning
 
-1. Set `enable_key_provisioning: true` in `cdk.json` feature flags and deploy with `cdk deploy` (enables runtime support: SSM parameters, IAM permissions, SNS wiring for rogue key detection)
+1. Set `enable_key_provisioning: true` in `budgeteer.config.yaml` and deploy with `cdk deploy` (enables runtime support: SSM parameters, IAM permissions, SNS wiring for rogue key detection)
 2. Use `manage_keys.py` to provision keys directly in AWS (no CDK deploy needed per key):
 ```bash
 # Create a key (provisions IAM user immediately)
@@ -437,7 +451,7 @@ python manage_keys.py remove --team platform --purpose chatbot-prod
 
 ### Enabling Cost Allocation Reporting
 
-1. Set `enable_cost_allocation_reporting: true` in `cdk.json` feature flags
+1. Set `enable_cost_allocation_reporting: true` in `budgeteer.config.yaml`
 2. **Prerequisite**: Activate `CostAllocation:Team` and `CostAllocation:Purpose` as user-defined cost allocation tags in the [AWS Billing console](https://console.aws.amazon.com/billing/home#/tags) — tags must be activated before Cost Explorer can group by them (activation takes up to 24 hours)
 3. Deploy with `cdk deploy`
 4. Cost data appears in the "Cost Allocation" CloudWatch dashboard after the first daily sync (06:00 UTC)

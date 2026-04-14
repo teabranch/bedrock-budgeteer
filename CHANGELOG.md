@@ -5,6 +5,7 @@ All notable changes to Bedrock Budgeteer are documented in this file.
 ## [Unreleased]
 
 ### Added
+- `budgeteer.config.yaml`: all user-facing configuration (feature flags, SSM defaults, budgets, retention) in one YAML file. `cdk.json` reserved for CDK framework flags. Custom config via `cdk deploy -c config=staging.yaml`.
 - `manage_keys.py` CLI: standalone script to provision tagged Bedrock API key IAM users directly via AWS APIs (no CDK deploy needed)
 - Rogue key detection: auto-tags keys created outside `manage_keys.py`, sends SNS alerts, publishes RogueKeyDetected metric
 - Pool-based budget model for API keys: global pool ($500 default) + per-key carve-outs by tier (low=$1, medium=$5, high=$25), global cap guardrail ($1000)
